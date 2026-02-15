@@ -1,0 +1,16 @@
+# .gitignore for Streamlit deployment
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+*.log
+.DS_Store
+.vscode/
+*.csv
+!logs.csv
+
+# Streamlit secrets (NEVER commit this!)
+.streamlit/secrets.toml
