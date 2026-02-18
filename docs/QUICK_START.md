@@ -190,129 +190,77 @@ SELECT * FROM dim_client;  -- Should show your company/companies
 
 ## Step 4: Import Your Data (15 minutes)
 
-### Create ETL Script
+### Configure Database Connection
 
-Create `quick_import.py`:
+**Option 1: Use .env file** (recommended)
 
-```python
-import pandas as pd
-import psycopg2
-from datetime import datetime
-from scoring_engine import parse_assistance_level, is_refusal
-
-# Connect to database
-conn = psycopg2.connect(
-    dbname='care_analytics',
-    user='postgres',
-    password='your_password',  # Change this!
-    host='localhost'
-)
-cursor = conn.cursor()
-
-# Insert a test client
-cursor.execute("""
-    INSERT INTO dim_client (client_name, client_type)
-    VALUES ('Test Care Home', 'Care Home')
-    RETURNING client_id
-""")
-client_id = cursor.fetchone()[0]
-conn.commit()
-
-# Insert a test resident
-cursor.execute("""
-    INSERT INTO dim_resident (resident_name, client_id, admission_date)
-    VALUES ('Test Resident', %s, CURRENT_DATE)
-    RETURNING resident_id
-""", (client_id,))
-resident_id = cursor.fetchone()[0]
-conn.commit()
-
-# Load your CSV (adjust path and column names as needed)
-df = pd.read_csv('logs.csv')
-df['Time logged'] = pd.to_datetime(df['Time logged'], format='%d/%m/%Y %H:%M:%S')
-
-# Domain mapping
-domain_map = {
-    'Getting Washed': 'Washing/Bathing',
-    'Oral Hygiene': 'Oral Care',
-    'Getting Dressed': 'Dressing/Clothing',
-    'Toileting': 'Toileting',
-    'Shaving': 'Grooming',
-    'Hair Care': 'Grooming'
-}
-
-# Get domain IDs
-cursor.execute("SELECT domain_id, domain_name FROM dim_domain")
-domains = {name: id for id, name in cursor.fetchall()}
-
-# Import first 100 events (for testing)
-for idx, row in df.head(100).iterrows():
-    domain_name = domain_map.get(row['Item'])
-    if not domain_name:
-        continue
-    
-    domain_id = domains.get(domain_name)
-    if not domain_id:
-        continue
-    
-    # Parse assistance and refusal
-    assistance = parse_assistance_level(
-        str(row.get('Description', '')),
-        str(row.get('Title', ''))
-    )
-    refusal = is_refusal(
-        str(row.get('Description', '')),
-        str(row.get('Title', ''))
-    )
-    
-    # Get date_id
-    event_date = row['Time logged'].date()
-    date_id = int(event_date.strftime('%Y%m%d'))
-    
-    # Insert event
-    try:
-        cursor.execute("""
-            INSERT INTO fact_adl_event (
-                resident_id, domain_id, date_id,
-                event_timestamp, logged_timestamp,
-                assistance_level, is_refusal,
-                event_title, event_description
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            resident_id,
-            domain_id,
-            date_id,
-            row['Time logged'],
-            row['Time logged'],
-            assistance.value,
-            refusal,
-            row.get('Title'),
-            row.get('Description')
-        ))
-    except Exception as e:
-        print(f"Error importing row {idx}: {e}")
-        continue
-
-conn.commit()
-
-# Check what was imported
-cursor.execute("SELECT COUNT(*) FROM fact_adl_event")
-count = cursor.fetchone()[0]
-print(f"✅ Imported {count} events")
-
-cursor.close()
-conn.close()
+Copy the example file:
+```bash
+cp .env.example .env
 ```
 
-Run it:
+Edit `.env` with your password:
+```env
+DB_NAME=care_analytics
+DB_USER=postgres
+DB_PASSWORD=your_actual_password
+DB_HOST=localhost
+DB_PORT=5432
+```
+
+**Option 2: Pass password on command line**
+
+Use `--password` flag (see examples below)
+
+### Run the Import
+
+Test with first 100 rows:
 ```bash
-python quick_import.py
+python scripts/import_csv_to_db.py logs.csv --client "Your Care Home" --limit 100
+```
+
+Import all data:
+```bash
+python scripts/import_csv_to_db.py logs.csv --client "Your Care Home"
 ```
 
 **Expected output**:
 ```
-✅ Imported 100 events
+============================================================
+Care Analytics - CSV Import Tool
+============================================================
+✓ Loaded 5000 rows from logs.csv
+
+🔌 Connecting to database: care_analytics
+✓ Connected
+
+📋 Setting up client: Your Care Home
+✓ Found 5 domains in database
+✓ Found 45 unique residents in CSV
+✓ Created/verified 45 residents
+
+📥 Importing first 100 events...
+  ✓ Imported 100 events...
+
+============================================================
+✅ Import complete!
+   Imported: 100 events
+   Skipped:  0 events
+   Errors:   0 events
+============================================================
 ```
+
+### CSV Requirements
+
+Your CSV should have these columns:
+- `Time logged` - Event timestamp
+- `Resident` - Resident name
+- `Item` - Domain type (e.g., "Getting Washed", "Oral Hygiene")
+- `Title` - Event title
+- `Description` - Event description
+- `Staff` (optional) - Staff member name
+
+**Note**: See [scripts/README.md](../scripts/README.md) for full documentation and options.
 
 ---
 

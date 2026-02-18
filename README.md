@@ -45,6 +45,10 @@ pal-adl/
 │   ├── secrets.toml.example
 │   └── generate_password.py
 │
+├── scripts/                # Utility scripts
+│   ├── import_csv_to_db.py
+│   └── README.md
+│
 ├── requirements.txt
 ├── Dockerfile
 └── run_dashboard.bat
@@ -77,6 +81,19 @@ pal-adl/
 ---
 
 ## 🚀 Quick Start
+
+### Setup
+
+1. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Configure database** (for data import)
+   ```bash
+   cp .env.example .env
+   # Edit .env with your PostgreSQL password
+   ```
 
 ### Current System (CSV-based)
 
