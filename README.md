@@ -15,26 +15,64 @@ This is a **risk intelligence and audit layer** built on top of exported care lo
 
 ---
 
+## 📁 Project Structure
+
+```
+pal-adl/
+├── src/                    # Python source code
+│   ├── scoring_engine.py
+│   ├── dashboard_queries.py
+│   ├── dashboard.py
+│   └── weeklyCareLogChecks.py
+│
+├── database/               # Database files
+│   ├── schema.sql
+│   ├── seed_company.sql
+│   └── migrations/
+│
+├── tests/                  # Test files
+│   └── test_scoring_engine.py
+│
+├── docs/                   # Documentation
+│   ├── SYSTEM_DESIGN.md
+│   ├── DESIGN_COMPLETE.md
+│   ├── IMPLEMENTATION_ROADMAP.md
+│   ├── QUICK_START.md
+│   ├── DEPLOYMENT.md
+│   └── PASSWORD_SETUP.md
+│
+├── config/                 # Configuration
+│   ├── secrets.toml.example
+│   └── generate_password.py
+│
+├── requirements.txt
+├── Dockerfile
+└── run_dashboard.bat
+```
+
+---
+
 ## 📚 Documentation
 
 ### New System Design (February 2026)
 
 **Start here**:
-- 📋 **[DESIGN_COMPLETE.md](DESIGN_COMPLETE.md)** - Overview of the complete system
-- 📐 **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)** - Detailed design specification (140+ pages)
-- 🚀 **[IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md)** - Step-by-step migration guide
+- 📋 **[DESIGN_COMPLETE.md](docs/DESIGN_COMPLETE.md)** - Overview of the complete system
+- 📐 **[SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md)** - Detailed design specification (140+ pages)
+- 🚀 **[IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md)** - Step-by-step migration guide
 
 **Implementation Files**:
-- 🗄️ **[schema.sql](schema.sql)** - PostgreSQL star schema DDL
-- 🧮 **[scoring_engine.py](scoring_engine.py)** - Dual scoring system (CRS + DCS)
-- 📊 **[dashboard_queries.py](dashboard_queries.py)** - SQL query builder for all layers
-- ✅ **[test_scoring_engine.py](test_scoring_engine.py)** - Complete test suite (31 tests)
+- 🗄️ **[schema.sql](database/schema.sql)** - PostgreSQL star schema DDL
+- 🏢 **[seed_company.sql](database/seed_company.sql)** - Company/client seed data template
+- 🧮 **[scoring_engine.py](src/scoring_engine.py)** - Dual scoring system (CRS + DCS)
+- 📊 **[dashboard_queries.py](src/dashboard_queries.py)** - SQL query builder for all layers
+- ✅ **[test_scoring_engine.py](tests/test_scoring_engine.py)** - Complete test suite (31 tests)
 
 ### Current System (Legacy)
 
-- 📱 **[dashboard.py](dashboard.py)** - Current Streamlit dashboard (CSV-based)
-- 🔍 **[weeklyCareLogChecks.py](weeklyCareLogChecks.py)** - Current analysis logic
-- 🔐 **[PASSWORD_SETUP.md](PASSWORD_SETUP.md)** - Authentication configuration
+- 📱 **[dashboard.py](src/dashboard.py)** - Current Streamlit dashboard (CSV-based)
+- 🔍 **[weeklyCareLogChecks.py](src/weeklyCareLogChecks.py)** - Current analysis logic
+- 🔐 **[PASSWORD_SETUP.md](docs/PASSWORD_SETUP.md)** - Authentication configuration
 
 ---
 
@@ -43,12 +81,12 @@ This is a **risk intelligence and audit layer** built on top of exported care lo
 ### Current System (CSV-based)
 
 ```bash
-streamlit run dashboard.py
+streamlit run src/dashboard.py
 ```
 
 ### New System (After Migration)
 
-See [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) for complete setup instructions.
+See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for complete setup instructions.
 
 ---
 
@@ -57,7 +95,7 @@ See [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) for complete setup in
 **Password Protected** - Dashboard requires authentication to access sensitive resident data.
 
 - **Default password:** `admin123` (⚠️ Change immediately!)
-- See [PASSWORD_SETUP.md](PASSWORD_SETUP.md) for configuration
+- See [PASSWORD_SETUP.md](docs/PASSWORD_SETUP.md) for configuration
 ---
 
 ## ✨ Key Features
@@ -149,7 +187,7 @@ Ran 31 tests in 0.004s
 
 **Phase 1: Database Setup** (Week 1)
 - Install PostgreSQL
-- Run `schema.sql`
+- Run `database/schema.sql`
 - Populate dimensions
 
 **Phase 2: Data Import** (Week 1-2)
@@ -167,7 +205,7 @@ Ran 31 tests in 0.004s
 - Automated nightly scoring
 - Decommission legacy system
 
-See [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) for detailed steps.
+See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for detailed steps.
 
 ---
 
@@ -199,9 +237,9 @@ See [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) for detailed steps.
 
 ## 🤝 Support
 
-- **Design Questions**: See [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)
-- **Implementation Help**: See [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md)
-- **Testing**: Run [test_scoring_engine.py](test_scoring_engine.py)
+- **Design Questions**: See [SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md)
+- **Implementation Help**: See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md)
+- **Testing**: Run [test_scoring_engine.py](tests/test_scoring_engine.py)
 
 ---
 
@@ -214,5 +252,5 @@ This is a risk intelligence system for care providers. Ensure compliance with:
 
 ---
 
-**Ready to migrate?** Start with [DESIGN_COMPLETE.md](DESIGN_COMPLETE.md) for an overview, then follow [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md).
+**Ready to migrate?** Start with [DESIGN_COMPLETE.md](docs/DESIGN_COMPLETE.md) for an overview, then follow [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md).
 

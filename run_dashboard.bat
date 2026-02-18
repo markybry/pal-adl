@@ -10,6 +10,6 @@ if exist "..\..\..\.venv\Scripts\activate.bat" (
 )
 
 REM Run Streamlit
-python -m streamlit run dashboard.py
+python -m streamlit run src/dashboard.py
 
 pause

@@ -95,35 +95,33 @@
 2. **Create Database**
    ```bash
    createdb care_analytics
-   psql care_analytics < schema.sql
+   psql care_analytics < database/schema.sql
    ```
 
-3. **Verify Schema**
+3. **Load Company Data**
+   
+   Edit `database/seed_company.sql` with your organization info:
+   ```sql
+   INSERT INTO dim_client (client_name, client_type, address, primary_contact, phone, is_active, contract_start)
+   VALUES
+       ('Your Care Home Name', 'Care Home', '123 Main St', 'Manager Name', '555-0100', TRUE, '2024-01-01');
+   ```
+   
+   Then run:
+   ```bash
+   psql care_analytics < database/seed_company.sql
+   ```
+
+4. **Verify Schema**
    ```sql
    -- Check tables created
    \dt
    
    -- Check domain data populated
    SELECT * FROM dim_domain;
-   ```
-
-4. **Create Initial Client and Residents**
-   ```sql
-   -- Insert your organization
-   INSERT INTO dim_client (client_name, client_type, is_active)
-   VALUES ('Your Care Home Name', 'Care Home', TRUE);
    
-   -- Insert residents (replace with actual names)
-   INSERT INTO dim_resident (resident_name, client_id, admission_date)
-   SELECT 
-       DISTINCT resident_name,
-       1,  -- client_id from above
-       CURRENT_DATE - INTERVAL '1 year'  -- Estimate if unknown
-   FROM (
-       -- Get distinct residents from CSV
-       SELECT DISTINCT "Resident" AS resident_name
-       FROM your_csv_import
-   ) residents;
+   -- Check your company loaded
+   SELECT * FROM dim_client;
    ```
 
 **Deliverables:**
@@ -187,7 +185,7 @@ def import_csv_to_star_schema(csv_path, conn):
             continue
         
         # Detect assistance level and refusal
-        from scoring_engine import parse_assistance_level, is_refusal
+        from src.scoring_engine import parse_assistance_level, is_refusal
         
         assistance = parse_assistance_level(
             str(row.get('Description', '')),
@@ -286,8 +284,8 @@ Batch score calculation - populates fact_resident_domain_score
 
 import psycopg2
 from datetime import date, timedelta
-from scoring_engine import ScoringEngine, ADLEvent, AssistanceLevel, ADL_DOMAINS
-from dashboard_queries import DateHelper
+from src.scoring_engine import ScoringEngine, ADLEvent, AssistanceLevel, ADL_DOMAINS
+from src.dashboard_queries import DateHelper
 
 def calculate_and_store_scores(conn, end_date: date, period_days: int):
     """Calculate scores for all residents and store in DB"""

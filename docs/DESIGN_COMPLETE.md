@@ -30,7 +30,7 @@ A comprehensive 140+ page design specification covering:
 
 ---
 
-### 2. **Database Schema** ([schema.sql](schema.sql))
+### 2. **Database Schema** ([schema.sql](../database/schema.sql))
 
 Production-ready PostgreSQL DDL:
 
@@ -45,7 +45,7 @@ Production-ready PostgreSQL DDL:
 
 ---
 
-### 3. **Scoring Engine** ([scoring_engine.py](scoring_engine.py))
+### 3. **Scoring Engine** ([scoring_engine.py](../src/scoring_engine.py))
 
 Python module implementing all scoring logic:
 
@@ -75,7 +75,7 @@ print(analysis.care_risk_score.explanation)
 
 ---
 
-### 4. **Dashboard Query Builder** ([dashboard_queries.py](dashboard_queries.py))
+### 4. **Dashboard Query Builder** ([dashboard_queries.py](../src/dashboard_queries.py))
 
 SQL query templates for all dashboard layers:
 
@@ -117,7 +117,7 @@ Step-by-step migration plan:
 
 ---
 
-### 6. **Test Suite** ([test_scoring_engine.py](test_scoring_engine.py))
+### 6. **Test Suite** ([test_scoring_engine.py](../tests/test_scoring_engine.py))
 
 Comprehensive unit tests for scoring engine:
 
@@ -306,10 +306,10 @@ Every score calculation traces back to:
 | File | Purpose | Lines | Status |
 |------|---------|-------|--------|
 | [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) | Complete design spec | 1400+ | ✅ Done |
-| [schema.sql](schema.sql) | PostgreSQL DDL | 400+ | ✅ Done |
-| [scoring_engine.py](scoring_engine.py) | Python scoring logic | 600+ | ✅ Done |
-| [dashboard_queries.py](dashboard_queries.py) | SQL query builder | 400+ | ✅ Done |
-| [test_scoring_engine.py](test_scoring_engine.py) | Unit tests | 500+ | ✅ Done |
+| [schema.sql](../database/schema.sql) | PostgreSQL DDL | 400+ | ✅ Done |
+| [scoring_engine.py](../src/scoring_engine.py) | Python scoring logic | 600+ | ✅ Done |
+| [dashboard_queries.py](../src/dashboard_queries.py) | SQL query builder | 400+ | ✅ Done |
+| [test_scoring_engine.py](../tests/test_scoring_engine.py) | Unit tests | 500+ | ✅ Done |
 | [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) | Migration guide | 800+ | ✅ Done |
 
 **Total**: ~4,100 lines of production-ready code and documentation

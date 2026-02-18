@@ -39,7 +39,7 @@
 
 ```bash
 cd c:\Users\marky\code\pal-adl
-python test_scoring_engine.py
+python tests/test_scoring_engine.py
 ```
 
 **Expected output**:
@@ -50,7 +50,7 @@ Ran 31 tests in 0.004s
 
 ### Understand a Test
 
-Open [test_scoring_engine.py](test_scoring_engine.py) and find:
+Open [test_scoring_engine.py](../tests/test_scoring_engine.py) and find:
 
 ```python
 def test_amber_scenario(self):
@@ -145,7 +145,7 @@ CREATE DATABASE care_analytics;
 ### Load Schema
 
 ```bash
-psql -U postgres -d care_analytics -f schema.sql
+psql -U postgres -d care_analytics -f database/schema.sql
 ```
 
 **Expected output**:
@@ -157,6 +157,23 @@ INSERT 0 5  (domains inserted)
 ...
 ```
 
+### Load Company Data
+
+Edit `database/seed_company.sql` with your organization info, then run:
+
+```bash
+psql -U postgres -d care_analytics -f database/seed_company.sql
+```
+
+**Expected output**:
+```
+INSERT 0 2
+ status          | count
+-----------------+-------
+ Companies Loaded:| 2
+...
+```
+
 ### Verify
 
 ```bash
@@ -165,6 +182,7 @@ psql -U postgres -d care_analytics
 # In psql:
 \dt  -- List tables
 SELECT * FROM dim_domain;  -- Should show 5 ADL domains
+SELECT * FROM dim_client;  -- Should show your company/companies
 \q
 ```
 
@@ -508,7 +526,7 @@ In 1 hour, you have:
 **Need help?**:
 - See [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md)
 - Review [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)
-- Check test examples in [test_scoring_engine.py](test_scoring_engine.py)
+- Check test examples in [test_scoring_engine.py](../tests/test_scoring_engine.py)
 
 ---
 

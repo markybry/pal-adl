@@ -62,7 +62,7 @@ if not check_password():
     st.stop()
 
 # Import the analysis functions AFTER authentication
-from weeklyCareLogChecks import (
+from src.weeklyCareLogChecks import (
     df, ADL_DOMAINS, REFUSAL_THRESHOLDS, DOCUMENTATION_THRESHOLDS,
     analyze_adl_domain
 )

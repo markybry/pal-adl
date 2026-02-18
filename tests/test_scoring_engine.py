@@ -5,7 +5,7 @@ Validates that scoring logic works as documented.
 
 import unittest
 from datetime import datetime, timedelta
-from scoring_engine import (
+from src.scoring_engine import (
     ScoringEngine,
     ADLEvent,
     AssistanceLevel,
@@ -319,25 +319,25 @@ class TestHelperFunctions(unittest.TestCase):
     """Test utility functions"""
     
     def test_parse_assistance_level_independent(self):
-        from scoring_engine import parse_assistance_level
+        from src.scoring_engine import parse_assistance_level
         
         level = parse_assistance_level("Dressed himself on his own", "")
         self.assertEqual(level, AssistanceLevel.INDEPENDENT)
     
     def test_parse_assistance_level_refusal(self):
-        from scoring_engine import parse_assistance_level
+        from src.scoring_engine import parse_assistance_level
         
         level = parse_assistance_level("Resident refused morning care", "")
         self.assertEqual(level, AssistanceLevel.REFUSED)
     
     def test_parse_assistance_level_full(self):
-        from scoring_engine import parse_assistance_level
+        from src.scoring_engine import parse_assistance_level
         
         level = parse_assistance_level("Required full assistance", "")
         self.assertEqual(level, AssistanceLevel.FULL_ASSISTANCE)
     
     def test_is_refusal_detection(self):
-        from scoring_engine import is_refusal
+        from src.scoring_engine import is_refusal
         
         self.assertTrue(is_refusal("Resident refused", ""))
         self.assertTrue(is_refusal("", "Care declined"))
