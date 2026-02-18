@@ -532,7 +532,6 @@ VALUES
 CREATE TABLE dim_staff (
     staff_id            SERIAL PRIMARY KEY,
     staff_name          VARCHAR(255) NOT NULL,
-    client_id           INTEGER REFERENCES dim_client(client_id),
     
     -- Employment
     role                VARCHAR(100),
@@ -545,9 +544,17 @@ CREATE TABLE dim_staff (
     updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX idx_staff_client ON dim_staff(client_id);
 CREATE INDEX idx_staff_active ON dim_staff(is_active) WHERE is_active = TRUE;
 ```
+
+**Design Decision**: Staff are not assigned to specific clients. Their work locations are **derived from actual care events** in `fact_adl_event`. 
+
+**Rationale**: 
+- In the care domain, staff-client restrictions don't exist as formal business rules
+- If restrictions existed, they would manifest as **missing events** (staff simply wouldn't log care at certain locations)
+- The fact table is the source of truth - joining `fact_adl_event → resident → client` reveals where staff actually worked
+- Eliminates unnecessary bridge table complexity
+- Supports flexible staffing (agency workers, cross-location coverage) automatically
 
 ---
 

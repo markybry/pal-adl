@@ -82,7 +82,6 @@ COMMENT ON COLUMN dim_domain.gap_threshold_red IS 'Maximum hours between events 
 CREATE TABLE dim_staff (
     staff_id            SERIAL PRIMARY KEY,
     staff_name          VARCHAR(255) NOT NULL,
-    client_id           INTEGER REFERENCES dim_client(client_id),
     
     -- Employment
     role                VARCHAR(100),
@@ -95,10 +94,10 @@ CREATE TABLE dim_staff (
     updated_at          TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX idx_staff_client ON dim_staff(client_id);
 CREATE INDEX idx_staff_active ON dim_staff(is_active) WHERE is_active = TRUE;
 
-COMMENT ON TABLE dim_staff IS 'Care staff members';
+COMMENT ON TABLE dim_staff IS 'Care staff members - client assignments derived from fact_adl_event';
+COMMENT ON COLUMN dim_staff.staff_id IS 'No client_id: staff work locations are determined by actual care events in fact_adl_event, not pre-assigned';
 
 -- Date Dimension
 CREATE TABLE dim_date (
@@ -381,6 +380,42 @@ WHERE e.resident_id = :resident_id
   AND e.domain_id = :domain_id
   AND e.event_timestamp >= NOW() - INTERVAL '7 days'
 ORDER BY e.event_timestamp DESC;
+*/
+
+-- Staff Work Location Query (derived from actual events)
+/*
+-- Find which staff worked at which clients (based on actual care events)
+SELECT 
+    s.staff_name,
+    s.role,
+    c.client_name,
+    MIN(e.event_timestamp) as first_event,
+    MAX(e.event_timestamp) as last_event,
+    COUNT(*) as total_events
+FROM dim_staff s
+JOIN fact_adl_event e ON s.staff_id = e.staff_id
+JOIN dim_resident r ON e.resident_id = r.resident_id
+JOIN dim_client c ON r.client_id = c.client_id
+WHERE s.is_active = TRUE
+GROUP BY s.staff_name, s.role, c.client_name
+ORDER BY s.staff_name, c.client_name;
+
+-- Find staff working at multiple locations
+SELECT 
+    s.staff_id,
+    s.staff_name,
+    s.role,
+    COUNT(DISTINCT c.client_id) as num_clients,
+    STRING_AGG(DISTINCT c.client_name, ', ' ORDER BY c.client_name) as clients,
+    COUNT(*) as total_events
+FROM dim_staff s
+JOIN fact_adl_event e ON s.staff_id = e.staff_id
+JOIN dim_resident r ON e.resident_id = r.resident_id
+JOIN dim_client c ON r.client_id = c.client_id
+WHERE s.is_active = TRUE
+GROUP BY s.staff_id, s.staff_name, s.role
+HAVING COUNT(DISTINCT c.client_id) > 1
+ORDER BY num_clients DESC, s.staff_name;
 */
 
 -- =============================================================================
