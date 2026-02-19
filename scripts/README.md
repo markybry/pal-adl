@@ -32,6 +32,13 @@ DB_HOST=localhost
 DB_PORT=5432
 ```
 
+**3. Enable idempotent imports (one-time migration)**
+```bash
+psql -U postgres -d care_analytics -f database/migrations/002_add_event_dedupe_index.sql
+```
+
+This adds the dedupe index used by `ON CONFLICT DO NOTHING` so re-running the same CSV does not create duplicate events.
+
 ### Usage
 
 **With .env file** (recommended)
@@ -106,6 +113,7 @@ The script imports **Personal Care ADL domains only**:
 - **Oral Care** - Oral Hygiene, Teeth Brushing, Dental, Teeth, Oral
 - **Dressing/Clothing** - Getting Dressed, Dressing, Dress, Clothing
 - **Toileting** - Toilet, Continence, Pad Change
+ - **Toileting** - Toilet, Continence, Pad Change, Pad check
 - **Grooming** - Shaving, Hair Care, Hair, Nails
 
 **Domains not imported** (will be skipped):
@@ -155,6 +163,7 @@ Care Analytics - CSV Import Tool
 ✅ Import complete!
    Imported: 4,850 events
    Skipped:  150 events
+   Duplicates (already present): 0 events
    Errors:   0 events
 
 ⚠️  Skipped domains (not in Personal Care ADLs):

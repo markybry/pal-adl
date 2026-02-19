@@ -174,6 +174,14 @@ INSERT 0 2
 ...
 ```
 
+### Enable Idempotent Import (one-time)
+
+```bash
+psql -U postgres -d care_analytics -f database/migrations/002_add_event_dedupe_index.sql
+```
+
+This ensures re-running the same CSV will not create duplicate events.
+
 ### Verify
 
 ```bash
@@ -266,136 +274,59 @@ Your CSV should have these columns:
 
 ## Step 5: Calculate Scores (10 minutes)
 
-### Create Score Calculator
+Use the built-in batch script:
 
-Create `quick_score.py`:
+```bash
+python scripts/calculate_scores.py --periods 7,14,30
+```
 
-```python
-import psycopg2
-from datetime import date, timedelta
-from scoring_engine import ScoringEngine, ADLEvent, AssistanceLevel
-from dashboard_queries import DateHelper
+Optional examples:
 
-conn = psycopg2.connect(
-    dbname='care_analytics',
-    user='postgres',
-    password='your_password',
-    host='localhost'
-)
-cursor = conn.cursor()
+```bash
+# Calculate only 7-day scores
+python scripts/calculate_scores.py --periods 7
 
-# Get date range
-end_date = date.today()
-start_date = end_date - timedelta(days=6)  # 7 days
-start_date_id = DateHelper.date_to_date_id(start_date)
-end_date_id = DateHelper.date_to_date_id(end_date)
+# Calculate for one client
+python scripts/calculate_scores.py --periods 7,14,30 --client "Your Care Home"
 
-# Get all residents
-cursor.execute("SELECT resident_id, resident_name FROM dim_resident WHERE is_active = TRUE")
-residents = cursor.fetchall()
-
-# Get all domains
-cursor.execute("SELECT domain_id, domain_name FROM dim_domain")
-domains = cursor.fetchall()
-
-scores_calculated = 0
-
-for resident_id, resident_name in residents:
-    for domain_id, domain_name in domains:
-        # Fetch events
-        cursor.execute("""
-            SELECT 
-                event_timestamp,
-                logged_timestamp,
-                assistance_level,
-                is_refusal,
-                event_title,
-                event_description
-            FROM fact_adl_event
-            WHERE resident_id = %s
-              AND domain_id = %s
-              AND event_timestamp >= %s
-              AND event_timestamp <= %s
-            ORDER BY event_timestamp
-        """, (resident_id, domain_id, start_date, end_date))
-        
-        rows = cursor.fetchall()
-        if not rows:
-            continue
-        
-        # Convert to ADLEvent objects
-        events = [
-            ADLEvent(
-                event_timestamp=row[0],
-                logged_timestamp=row[1],
-                assistance_level=AssistanceLevel(row[2]),
-                is_refusal=row[3],
-                event_title=row[4],
-                event_description=row[5]
-            )
-            for row in rows
-        ]
-        
-        # Calculate scores
-        analysis = ScoringEngine.analyze_resident_domain(
-            resident_id=str(resident_id),
-            domain_name=domain_name,
-            events=events,
-            period_days=7
-        )
-        
-        # Store score
-        cursor.execute("""
-            INSERT INTO fact_resident_domain_score (
-                resident_id, domain_id,
-                start_date_id, end_date_id,
-                crs_level, crs_total,
-                crs_refusal_score, crs_gap_score, crs_dependency_score,
-                refusal_count, max_gap_hours,
-                dcs_level, dcs_percentage,
-                actual_entries, expected_entries
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-            )
-            ON CONFLICT (resident_id, domain_id, start_date_id, end_date_id)
-            DO NOTHING
-        """, (
-            resident_id, domain_id,
-            start_date_id, end_date_id,
-            analysis.care_risk_score.risk_level.value,
-            analysis.care_risk_score.total_points,
-            analysis.care_risk_score.components[0].points,
-            analysis.care_risk_score.components[1].points,
-            analysis.care_risk_score.components[2].points,
-            analysis.refusal_count,
-            analysis.max_gap_hours,
-            analysis.documentation_score.risk_level.value,
-            analysis.documentation_score.compliance_percentage,
-            analysis.total_events,
-            analysis.documentation_score.expected_entries
-        ))
-        
-        scores_calculated += 1
-        print(f"✓ {resident_name} - {domain_name}: {analysis.overall_risk.value}")
-
-conn.commit()
-print(f"\n✅ Calculated {scores_calculated} scores")
-
-cursor.close()
-conn.close()
+# Backfill for a specific date
+python scripts/calculate_scores.py --periods 7,14,30 --end-date 2026-02-19
 ```
 
 Run it:
 ```bash
-python quick_score.py
+python scripts/calculate_scores.py --periods 7,14,30
 ```
 
 **Expected output**:
 ```
-✓ Test Resident - Oral Care: GREEN
-✓ Test Resident - Toileting: AMBER
+Care Analytics - Score Calculation
+Calculating 7-day scores...
+✓ Written 120 scores (processed 150, skipped 30)
 ...
-✅ Calculated 5 scores
+Score Calculation Complete
+```
+
+---
+
+## Step 6: Launch Executive Dashboard (5 minutes)
+
+Run the new Layer 1 dashboard:
+
+```bash
+streamlit run src/dashboard_v2.py
+```
+
+What you should see:
+- Client × Domain executive grid
+- Primary risk as traffic lights (CRS)
+- Documentation mismatch badge when DCS differs
+- 7/14/30-day period selector
+
+If no data appears, calculate scores first with:
+
+```bash
+python scripts/calculate_scores.py --periods 7,14,30
 ```
 
 ---

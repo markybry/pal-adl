@@ -170,6 +170,20 @@ CREATE INDEX idx_fact_adl_refusals
     ON fact_adl_event(resident_id, domain_id) 
     WHERE is_refusal = TRUE;
 
+-- Idempotent import dedupe index (prevents duplicate events on re-import)
+CREATE UNIQUE INDEX uq_fact_adl_event_dedupe
+    ON fact_adl_event (
+        resident_id,
+        domain_id,
+        event_timestamp,
+        COALESCE(event_title, ''),
+        COALESCE(event_description, ''),
+        COALESCE(assistance_level, ''),
+        is_refusal,
+        COALESCE(staff_id, -1),
+        COALESCE(source_system, '')
+    );
+
 COMMENT ON TABLE fact_adl_event IS 'Immutable record of every ADL care event';
 COMMENT ON COLUMN fact_adl_event.event_timestamp IS 'When care was delivered';
 COMMENT ON COLUMN fact_adl_event.logged_timestamp IS 'When event was recorded (for late entry detection)';

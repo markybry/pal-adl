@@ -69,6 +69,7 @@ DOMAIN_MAP = {
     'Toilet': 'Toileting',
     'Continence': 'Toileting',
     'Pad Change': 'Toileting',
+    'Pad check': 'Toileting',
     
     # Grooming variants
     'Shaving': 'Grooming',
@@ -234,6 +235,27 @@ def ensure_date_dimension(cursor, event_date):
     return date_id
 
 
+def verify_idempotency_index(cursor):
+    """Ensure required dedupe index exists before import."""
+    cursor.execute("""
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname = 'uq_fact_adl_event_dedupe'
+        LIMIT 1
+    """)
+
+    if cursor.fetchone():
+        return
+
+    print("❌ Missing required dedupe index: uq_fact_adl_event_dedupe")
+    print("\nThis import is configured to be idempotent, but your database schema")
+    print("has not yet been migrated.")
+    print("\nRun this once, then retry import:")
+    print("  psql -U postgres -d care_analytics -f database/migrations/002_add_event_dedupe_index.sql")
+    sys.exit(1)
+
+
 # =============================================================================
 # MAIN ETL LOGIC
 # =============================================================================
@@ -241,6 +263,9 @@ def ensure_date_dimension(cursor, event_date):
 def import_events(df, conn, client_name, limit=None):
     """Import events from DataFrame to database"""
     cursor = conn.cursor()
+
+    # Safety check: enforce idempotent-ready schema
+    verify_idempotency_index(cursor)
     
     # Get or create client
     print(f"\n📋 Setting up client: {client_name}")
@@ -274,6 +299,7 @@ def import_events(df, conn, client_name, limit=None):
     
     imported = 0
     skipped = 0
+    duplicates = 0
     errors = 0
     skipped_domains = {}  # Track which domains were skipped and how many
     
@@ -332,6 +358,7 @@ def import_events(df, conn, client_name, limit=None):
                     event_title, event_description,
                     source_system
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
             """, (
                 resident_id,
                 domain_id,
@@ -345,8 +372,12 @@ def import_events(df, conn, client_name, limit=None):
                 description,
                 'CSV Import'
             ))
-            
-            imported += 1
+
+            if cursor.rowcount == 1:
+                imported += 1
+            else:
+                duplicates += 1
+                continue
             
             # Commit every 100 rows
             if imported % 100 == 0:
@@ -367,6 +398,7 @@ def import_events(df, conn, client_name, limit=None):
     print(f"✅ Import complete!")
     print(f"   Imported: {imported:,} events")
     print(f"   Skipped:  {skipped:,} events")
+    print(f"   Duplicates (already present): {duplicates:,} events")
     print(f"   Errors:   {errors:,} events")
     
     # Show skipped domains breakdown
@@ -379,7 +411,7 @@ def import_events(df, conn, client_name, limit=None):
     
     print(f"{'='*60}")
     
-    return imported, skipped, errors
+    return imported, skipped, duplicates, errors
 
 
 # =============================================================================
