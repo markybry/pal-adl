@@ -1,7 +1,7 @@
 import hashlib
 import os
 import sys
-from datetime import date
+from datetime import date, datetime, time
 from pathlib import Path
 
 import pandas as pd
@@ -81,6 +81,40 @@ def color_row(series: pd.Series):
     return [""]
 
 
+def get_scored_clients(conn, start_date_id: int, end_date_id: int) -> pd.DataFrame:
+    return pd.read_sql(
+        """
+        SELECT DISTINCT
+            c.client_id,
+            c.client_name
+        FROM fact_resident_domain_score s
+        JOIN dim_resident r ON s.resident_id = r.resident_id
+        JOIN dim_client c ON r.client_id = c.client_id
+        WHERE s.start_date_id = %(start_date_id)s
+          AND s.end_date_id = %(end_date_id)s
+          AND r.is_active = TRUE
+          AND c.is_active = TRUE
+        ORDER BY c.client_name
+        """,
+        conn,
+        params={"start_date_id": start_date_id, "end_date_id": end_date_id},
+    )
+
+
+def risk_rank(risk: str) -> int:
+    if risk == "RED":
+        return 3
+    if risk == "AMBER":
+        return 2
+    if risk == "GREEN":
+        return 1
+    return 0
+
+
+def overall_risk(crs_level: str, dcs_level: str) -> str:
+    return crs_level if risk_rank(crs_level) >= risk_rank(dcs_level) else dcs_level
+
+
 def render_layer1(conn, start_date_id: int, end_date_id: int):
     query = DashboardQueries.layer1_executive_grid(start_date_id, end_date_id)
     df = pd.read_sql(
@@ -119,23 +153,7 @@ def render_layer1(conn, start_date_id: int, end_date_id: int):
 
 
 def render_layer2(conn, start_date_id: int, end_date_id: int):
-    clients_df = pd.read_sql(
-        """
-        SELECT DISTINCT
-            c.client_id,
-            c.client_name
-        FROM fact_resident_domain_score s
-        JOIN dim_resident r ON s.resident_id = r.resident_id
-        JOIN dim_client c ON r.client_id = c.client_id
-        WHERE s.start_date_id = %(start_date_id)s
-          AND s.end_date_id = %(end_date_id)s
-          AND r.is_active = TRUE
-          AND c.is_active = TRUE
-        ORDER BY c.client_name
-        """,
-        conn,
-        params={"start_date_id": start_date_id, "end_date_id": end_date_id},
-    )
+    clients_df = get_scored_clients(conn, start_date_id, end_date_id)
 
     if clients_df.empty:
         st.warning(
@@ -255,6 +273,191 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
     st.line_chart(trend_plot)
 
 
+def render_layer3(conn, start_date_id: int, end_date_id: int):
+    clients_df = get_scored_clients(conn, start_date_id, end_date_id)
+    if clients_df.empty:
+        st.warning(
+            "No clients have scores for this period. "
+            "Run scripts/calculate_scores.py for this end date and period first."
+        )
+        return
+
+    client_options = clients_df.set_index("client_name")["client_id"].to_dict()
+    selected_client_name = st.sidebar.selectbox("Client", list(client_options.keys()), key="layer3_client")
+    selected_client_id = int(client_options[selected_client_name])
+
+    residents_df = pd.read_sql(
+        """
+        SELECT DISTINCT
+            r.resident_id,
+            r.resident_name
+        FROM fact_resident_domain_score s
+        JOIN dim_resident r ON s.resident_id = r.resident_id
+        WHERE r.client_id = %(client_id)s
+          AND r.is_active = TRUE
+          AND s.start_date_id = %(start_date_id)s
+          AND s.end_date_id = %(end_date_id)s
+        ORDER BY r.resident_name
+        """,
+        conn,
+        params={
+            "client_id": selected_client_id,
+            "start_date_id": start_date_id,
+            "end_date_id": end_date_id,
+        },
+    )
+
+    if residents_df.empty:
+        st.info("No resident scores found for this client and period.")
+        return
+
+    resident_options = residents_df.set_index("resident_name")["resident_id"].to_dict()
+    selected_resident_name = st.sidebar.selectbox(
+        "Resident",
+        list(resident_options.keys()),
+        key="layer3_resident",
+    )
+    selected_resident_id = int(resident_options[selected_resident_name])
+
+    domains_df = pd.read_sql(DashboardQueries.get_domains(), conn)
+    domain_options = domains_df.set_index("domain_name")["domain_id"].to_dict()
+    selected_domain_name = st.sidebar.selectbox(
+        "Domain",
+        list(domain_options.keys()),
+        key="layer3_domain",
+    )
+    selected_domain_id = int(domain_options[selected_domain_name])
+
+    st.subheader(
+        f"Resident Deep Dive: {selected_resident_name} · {selected_domain_name} ({selected_client_name})"
+    )
+
+    score_query = DashboardQueries.layer3_score_breakdown(
+        selected_resident_id,
+        selected_domain_id,
+        start_date_id,
+        end_date_id,
+    )
+    score_df = pd.read_sql(
+        score_query,
+        conn,
+        params={
+            "resident_id": selected_resident_id,
+            "domain_id": selected_domain_id,
+            "start_date_id": start_date_id,
+            "end_date_id": end_date_id,
+        },
+    )
+
+    if score_df.empty:
+        st.info("No score breakdown found for this resident/domain in the selected period.")
+        return
+
+    score = score_df.iloc[0]
+    combined_risk = overall_risk(score["crs_level"], score["dcs_level"])
+
+    top1, top2, top3 = st.columns(3)
+    top1.metric("Overall", risk_badge(combined_risk))
+    top2.metric("Care Risk (CRS)", f"{risk_badge(score['crs_level'])} · {int(score['crs_total'])} pts")
+    top3.metric("Documentation (DCS)", f"{risk_badge(score['dcs_level'])} · {float(score['dcs_percentage']):.0f}%")
+
+    st.markdown("### Score Breakdown")
+    detail1, detail2 = st.columns(2)
+    with detail1:
+        st.write(f"Refusal score: {int(score['crs_refusal_score'])} points")
+        st.write(f"Gap score: {int(score['crs_gap_score'])} points")
+        st.write(f"Dependency score: {int(score['crs_dependency_score'])} points")
+        st.write(f"Refusal count: {int(score['refusal_count']) if pd.notna(score['refusal_count']) else 0}")
+        st.write(f"Max gap hours: {float(score['max_gap_hours']):.1f}" if pd.notna(score['max_gap_hours']) else "Max gap hours: N/A")
+    with detail2:
+        st.write(f"Actual entries: {int(score['actual_entries']) if pd.notna(score['actual_entries']) else 0}")
+        st.write(f"Expected entries: {float(score['expected_entries']):.1f}" if pd.notna(score['expected_entries']) else "Expected entries: N/A")
+        st.write(
+            f"Domain thresholds: amber {int(score['gap_threshold_amber'])}h, red {int(score['gap_threshold_red'])}h"
+        )
+        st.write(
+            f"Expected/day: {float(score['expected_per_day']):.1f}" if pd.notna(score['expected_per_day']) else "Expected/day: N/A"
+        )
+
+    start_date = DateHelper.date_id_to_date(start_date_id)
+    end_date = DateHelper.date_id_to_date(end_date_id)
+    start_ts = datetime.combine(start_date, time.min)
+    end_ts = datetime.combine(end_date, time.max)
+
+    st.markdown("### Event Timeline")
+    timeline_query = DashboardQueries.layer3_resident_timeline(
+        selected_resident_id,
+        selected_domain_id,
+        start_ts,
+        end_ts,
+    )
+    timeline_df = pd.read_sql(
+        timeline_query,
+        conn,
+        params={
+            "resident_id": selected_resident_id,
+            "domain_id": selected_domain_id,
+            "start_timestamp": start_ts,
+            "end_timestamp": end_ts,
+        },
+    )
+
+    if timeline_df.empty:
+        st.info("No events found for this resident/domain in the selected period.")
+    else:
+        timeline_df = timeline_df.rename(
+            columns={
+                "event_timestamp": "Event Time",
+                "assistance_level": "Assistance",
+                "is_refusal": "Refusal",
+                "event_title": "Title",
+                "event_description": "Description",
+                "staff_name": "Staff",
+                "gap_hours": "Gap (hours)",
+            }
+        )
+        if "Gap (hours)" in timeline_df.columns:
+            timeline_df["Gap (hours)"] = timeline_df["Gap (hours)"].apply(
+                lambda val: round(float(val), 1) if pd.notna(val) else None
+            )
+        st.dataframe(timeline_df, use_container_width=True)
+
+    st.markdown("### Assistance Distribution")
+    assist_query = DashboardQueries.layer3_assistance_distribution(
+        selected_resident_id,
+        selected_domain_id,
+        start_ts,
+        end_ts,
+    )
+    assist_df = pd.read_sql(
+        assist_query,
+        conn,
+        params={
+            "resident_id": selected_resident_id,
+            "domain_id": selected_domain_id,
+            "start_timestamp": start_ts,
+            "end_timestamp": end_ts,
+        },
+    )
+
+    if assist_df.empty:
+        st.info("No assistance distribution data available.")
+        return
+
+    chart_df = assist_df.set_index("assistance_level")["event_count"]
+    st.bar_chart(chart_df)
+    st.dataframe(
+        assist_df.rename(
+            columns={
+                "assistance_level": "Assistance",
+                "event_count": "Events",
+                "percentage": "Percent",
+            }
+        ),
+        use_container_width=True,
+    )
+
+
 def main():
     st.set_page_config(page_title="Care Analytics Dashboard", page_icon="🏥", layout="wide")
 
@@ -270,7 +473,15 @@ def main():
     st.sidebar.header("Analysis Period")
     period_days = st.sidebar.selectbox("Lookback (days)", [7, 14, 30], index=0)
     end_date = st.sidebar.date_input("End date", date.today())
-    layer = st.sidebar.selectbox("Layer", ["Layer 1 - Executive Grid", "Layer 2 - Client View"], index=0)
+    layer = st.sidebar.selectbox(
+        "Layer",
+        [
+            "Layer 1 - Executive Grid",
+            "Layer 2 - Client View",
+            "Layer 3 - Resident Deep Dive",
+        ],
+        index=0,
+    )
 
     start_date_id, end_date_id = DateHelper.get_date_range(end_date, period_days)
 
@@ -281,8 +492,10 @@ def main():
 
     if layer.startswith("Layer 1"):
         render_layer1(conn, start_date_id, end_date_id)
-    else:
+    elif layer.startswith("Layer 2"):
         render_layer2(conn, start_date_id, end_date_id)
+    else:
+        render_layer3(conn, start_date_id, end_date_id)
 
 
 if __name__ == "__main__":
