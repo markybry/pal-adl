@@ -85,6 +85,16 @@ DOMAIN_MAP = {
 
 # Expected CSV columns
 EXPECTED_COLUMNS = ['Time logged', 'Resident', 'Item', 'Title', 'Description']
+STAFF_COLUMN_CANDIDATES = [
+    'Staff',
+    'Logged by',
+    'Staff Name',
+    'Carer',
+    'Care Staff',
+    'Assigned To',
+    'Performed By',
+    'Created By'
+]
 
 
 # =============================================================================
@@ -116,6 +126,7 @@ def load_csv(filepath, date_format='%d/%m/%Y %H:%M:%S'):
     """Load and validate CSV file"""
     try:
         df = pd.read_csv(filepath)
+        df.columns = [str(col).strip() for col in df.columns]
         
         # Check required columns
         missing = set(EXPECTED_COLUMNS) - set(df.columns)
@@ -136,6 +147,16 @@ def load_csv(filepath, date_format='%d/%m/%Y %H:%M:%S'):
     except Exception as e:
         print(f"❌ Error loading CSV: {e}")
         sys.exit(1)
+
+
+def detect_staff_column(df):
+    """Return best-matching staff column name or None if unavailable."""
+    normalized_to_original = {str(col).strip().lower(): col for col in df.columns}
+    for candidate in STAFF_COLUMN_CANDIDATES:
+        match = normalized_to_original.get(candidate.lower())
+        if match:
+            return match
+    return None
 
 
 def get_or_create_client(cursor, client_name, client_type='Care Home'):
@@ -184,10 +205,17 @@ def get_or_create_staff(cursor, staff_name, role='Care Assistant'):
     """Get existing staff or create new one"""
     if not staff_name or pd.isna(staff_name):
         return None
+
+    normalized_staff_name = str(staff_name).strip()
+    if not normalized_staff_name:
+        return None
     
     cursor.execute("""
-        SELECT staff_id FROM dim_staff WHERE staff_name = %s
-    """, (staff_name,))
+        SELECT staff_id
+        FROM dim_staff
+        WHERE LOWER(TRIM(staff_name)) = LOWER(TRIM(%s))
+        LIMIT 1
+    """, (normalized_staff_name,))
     
     result = cursor.fetchone()
     if result:
@@ -197,7 +225,7 @@ def get_or_create_staff(cursor, staff_name, role='Care Assistant'):
         INSERT INTO dim_staff (staff_name, role, hire_date)
         VALUES (%s, %s, CURRENT_DATE)
         RETURNING staff_id
-    """, (staff_name, role))
+    """, (normalized_staff_name, role))
     
     return cursor.fetchone()[0]
 
@@ -298,10 +326,17 @@ def import_events(df, conn, client_name, limit=None):
         print(f"\n📥 Importing all {len(df)} events...")
     
     imported = 0
+    imported_with_staff = 0
     skipped = 0
     duplicates = 0
     errors = 0
     skipped_domains = {}  # Track which domains were skipped and how many
+    staff_column = detect_staff_column(df)
+
+    if staff_column:
+        print(f"✓ Staff column detected: {staff_column}")
+    else:
+        print("⚠️  No supported staff column found; events will be imported without staff linkage")
     
     for idx, row in df.iterrows():
         try:
@@ -335,8 +370,10 @@ def import_events(df, conn, client_name, limit=None):
             
             # Get or create staff (if column exists)
             staff_id = None
-            if 'Staff' in row and pd.notna(row['Staff']):
-                staff_id = get_or_create_staff(cursor, row['Staff'])
+            if staff_column and pd.notna(row.get(staff_column)):
+                staff_name = str(row.get(staff_column)).strip()
+                if staff_name:
+                    staff_id = get_or_create_staff(cursor, staff_name)
             
             # Parse assistance level and refusal
             description = str(row.get('Description', ''))
@@ -375,6 +412,8 @@ def import_events(df, conn, client_name, limit=None):
 
             if cursor.rowcount == 1:
                 imported += 1
+                if staff_id is not None:
+                    imported_with_staff += 1
             else:
                 duplicates += 1
                 continue
@@ -397,6 +436,7 @@ def import_events(df, conn, client_name, limit=None):
     print(f"\n{'='*60}")
     print(f"✅ Import complete!")
     print(f"   Imported: {imported:,} events")
+    print(f"   Imported with staff linked: {imported_with_staff:,} events")
     print(f"   Skipped:  {skipped:,} events")
     print(f"   Duplicates (already present): {duplicates:,} events")
     print(f"   Errors:   {errors:,} events")
