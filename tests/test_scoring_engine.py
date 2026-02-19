@@ -46,6 +46,16 @@ class TestRefusalScoring(unittest.TestCase):
         score = ScoringEngine.calculate_refusal_score(10)
         self.assertEqual(score.points, 3)
 
+    def test_threshold_scales_with_period_days(self):
+        # 5 refusals in 30 days => 0.17/day, below AMBER threshold (~0.29/day)
+        score = ScoringEngine.calculate_refusal_score(5, period_days=30)
+        self.assertEqual(score.points, 0)
+
+    def test_red_threshold_on_30_day_rate(self):
+        # 18 refusals in 30 days => 0.60/day, above RED threshold (~0.57/day)
+        score = ScoringEngine.calculate_refusal_score(18, period_days=30)
+        self.assertEqual(score.points, 3)
+
 
 class TestGapScoring(unittest.TestCase):
     """Test gap score calculation"""

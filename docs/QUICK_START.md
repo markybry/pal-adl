@@ -22,6 +22,8 @@
 
 - **Care Risk Score (CRS)** = Refusals + Gaps + Dependency (0-10 points)
   - 0-1: GREEN, 2-4: AMBER, 5+: RED
+  - Refusal component uses **refusals/day** so thresholds scale with lookback length
+    (7-day baseline: 0-1 GREEN, 2-3 AMBER, 4+ RED)
 
 - **Documentation Compliance Score (DCS)** = Actual / Expected × 100
   - 90-100%: GREEN, 60-89%: AMBER, <60%: RED
@@ -321,13 +323,13 @@ What you should see:
 - Client × Domain executive grid
 - Primary risk as traffic lights (CRS)
 - Documentation mismatch badge when DCS differs
-- 7/14/30-day period selector
-- Click-through drilldown flow (Layer 1 → Layer 2 → Layer 3)
+- 7/14/30-day period selector (Layer 3 also supports 365-day lookback)
+- Sidebar navigation across layers (Layer 1 → Layer 2 → Layer 3)
 - CSV exports on each layer
 
 How to navigate:
-1. Start in Layer 1 and choose a client/domain in the Drill-down section.
-2. Open Layer 2, then pick a resident/domain and open Layer 3.
+1. Use the sidebar **Layer** selector to switch between Layer 1, 2, and 3.
+2. In Layer 2/3, use sidebar filters (Client, Resident, Domain) to focus the view.
 3. Use back buttons to return to prior layers.
 
 If no data appears, calculate scores first with:

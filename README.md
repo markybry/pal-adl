@@ -138,9 +138,9 @@ See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for complete set
 3. **Resident Deep Dive**: Event timeline with full score explanations
 
 **Dashboard v2 UX**:
-- Click-through drilldown: Layer 1 → Layer 2 → Layer 3
+- Sidebar layer navigation: Layer 1 → Layer 2 → Layer 3
 - Back navigation between layers
-- CSV export actions on all layers (grid, residents, trend, score, timeline, assistance)
+- CSV export actions on key data views (grid, residents, score breakdown, timeline)
 
 **Star Schema Database**:
 - Multi-client support
@@ -162,9 +162,11 @@ See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for complete set
 ### Fixed Thresholds (No Drift)
 
 **Refusals**:
-- 0-1 refusals: GREEN
-- 2-3 refusals: AMBER (monitoring required)
-- 4+ refusals: RED (immediate review)
+- Refusal scoring is normalized by lookback window using **refusals/day**.
+- Baseline equivalence (7-day window):
+   - 0-1 refusals in 7d: GREEN
+   - 2-3 refusals in 7d: AMBER (monitoring required)
+   - 4+ refusals in 7d: RED (immediate review)
 
 **Documentation Compliance**:
 - 90-100%: GREEN (compliant)

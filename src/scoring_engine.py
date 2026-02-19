@@ -33,8 +33,13 @@ class AssistanceLevel(Enum):
 
 
 # Fixed Thresholds (Constants)
-REFUSAL_THRESHOLD_AMBER = 2  # 2-3 refusals = monitoring required
-REFUSAL_THRESHOLD_RED = 4    # 4+ refusals = immediate review
+# Refusal thresholds are defined as 7-day baseline counts and converted to per-day rates
+# for period-length-normalized scoring.
+REFUSAL_THRESHOLD_AMBER = 2  # 7-day baseline: 2 refusals = monitoring required
+REFUSAL_THRESHOLD_RED = 4    # 7-day baseline: 4 refusals = immediate review
+REFUSAL_BASELINE_DAYS = 7
+REFUSAL_RATE_THRESHOLD_AMBER = REFUSAL_THRESHOLD_AMBER / REFUSAL_BASELINE_DAYS
+REFUSAL_RATE_THRESHOLD_RED = REFUSAL_THRESHOLD_RED / REFUSAL_BASELINE_DAYS
 
 DOCUMENTATION_THRESHOLD_AMBER = 0.60  # <60% compliance = monitoring
 DOCUMENTATION_THRESHOLD_RED = 0.40    # <40% compliance = immediate review
@@ -154,35 +159,50 @@ class ScoringEngine:
     """
     
     @staticmethod
-    def calculate_refusal_score(refusal_count: int) -> ScoreComponent:
+    def calculate_refusal_score(refusal_count: int, period_days: int = REFUSAL_BASELINE_DAYS) -> ScoreComponent:
         """
         Calculate refusal component of Care Risk Score
-        
-        Thresholds:
-          0-1 refusals: 0 points (GREEN)
-          2-3 refusals: 2 points (AMBER threshold)
-          4+ refusals:  3 points (RED threshold)
+
+        Thresholds are rate-based to normalize across lookback windows.
+
+        Baseline (7-day equivalent):
+          AMBER at 2 refusals / 7 days  (~0.286 refusals/day)
+          RED at   4 refusals / 7 days  (~0.571 refusals/day)
         """
-        if refusal_count >= REFUSAL_THRESHOLD_RED:
+        if period_days <= 0:
+            raise ValueError("period_days must be a positive integer")
+
+        refusal_rate = refusal_count / period_days
+
+        if refusal_rate >= REFUSAL_RATE_THRESHOLD_RED:
             return ScoreComponent(
                 component_name='refusal_score',
                 points=3,
-                description=f'{refusal_count} refusals (≥{REFUSAL_THRESHOLD_RED} = RED)',
-                raw_value=float(refusal_count)
+                description=(
+                    f'{refusal_count} refusals in {period_days}d '
+                    f'({refusal_rate:.2f}/day ≥ {REFUSAL_RATE_THRESHOLD_RED:.2f}/day = RED)'
+                ),
+                raw_value=float(refusal_rate)
             )
-        elif refusal_count >= REFUSAL_THRESHOLD_AMBER:
+        elif refusal_rate >= REFUSAL_RATE_THRESHOLD_AMBER:
             return ScoreComponent(
                 component_name='refusal_score',
                 points=2,
-                description=f'{refusal_count} refusals ({REFUSAL_THRESHOLD_AMBER}-{REFUSAL_THRESHOLD_RED-1} = AMBER)',
-                raw_value=float(refusal_count)
+                description=(
+                    f'{refusal_count} refusals in {period_days}d '
+                    f'({refusal_rate:.2f}/day ≥ {REFUSAL_RATE_THRESHOLD_AMBER:.2f}/day = AMBER)'
+                ),
+                raw_value=float(refusal_rate)
             )
         elif refusal_count > 0:
             return ScoreComponent(
                 component_name='refusal_score',
                 points=0,
-                description=f'{refusal_count} refusal(s) (below threshold)',
-                raw_value=float(refusal_count)
+                description=(
+                    f'{refusal_count} refusal(s) in {period_days}d '
+                    f'({refusal_rate:.2f}/day below threshold)'
+                ),
+                raw_value=float(refusal_rate)
             )
         else:
             return ScoreComponent(
@@ -306,7 +326,8 @@ class ScoringEngine:
     @staticmethod
     def calculate_care_risk_score(
         events: List[ADLEvent],
-        domain_config: DomainConfig
+        domain_config: DomainConfig,
+        period_days: int = REFUSAL_BASELINE_DAYS
     ) -> CareRiskScore:
         """
         Calculate overall Care Risk Score
@@ -330,7 +351,7 @@ class ScoringEngine:
         max_gap_hours = max(gaps) if gaps else None
         
         # Calculate components
-        refusal_score = ScoringEngine.calculate_refusal_score(refusal_count)
+        refusal_score = ScoringEngine.calculate_refusal_score(refusal_count, period_days)
         gap_score = ScoringEngine.calculate_gap_score(max_gap_hours, domain_config)
         dependency_score = ScoringEngine.calculate_dependency_score(events)
         
@@ -410,7 +431,7 @@ class ScoringEngine:
             raise ValueError(f"Unknown domain: {domain_name}")
         
         # Calculate scores
-        care_risk = ScoringEngine.calculate_care_risk_score(events, domain_config)
+        care_risk = ScoringEngine.calculate_care_risk_score(events, domain_config, period_days)
         doc_score = ScoringEngine.calculate_documentation_score(
             actual_entries=len(events),
             expected_per_day=domain_config.expected_per_day,

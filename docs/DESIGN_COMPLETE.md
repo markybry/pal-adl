@@ -144,11 +144,14 @@ Ran 31 tests in 0.004s
 ### 1. **Fixed Thresholds (No Drift)**
 
 ```python
-REFUSAL_THRESHOLD_AMBER = 2  # Never changes
-REFUSAL_THRESHOLD_RED = 4    # Never changes
+REFUSAL_THRESHOLD_AMBER = 2  # 7-day baseline
+REFUSAL_THRESHOLD_RED = 4    # 7-day baseline
 ```
 
 Risk levels don't adjust based on population performance. This prevents normalization of poor care.
+
+Refusal scoring is period-normalized using refusals/day, with these constants as the
+7-day baseline equivalence.
 
 ### 2. **Dual Scoring (Separation of Concerns)**
 
@@ -165,7 +168,7 @@ Every score component must be explainable:
 
 ```
 Care Risk Score: AMBER (4 points)
-  • 3 refusals → 2 points (threshold: 2-3 = AMBER)
+   • Refusal rate equivalent to 2-3 refusals per 7 days → 2 points (AMBER)
   • Max gap 18 hours → 2 points (threshold: >12h for Toileting)
   • No dependency change → 0 points
   Total: 4 points = AMBER

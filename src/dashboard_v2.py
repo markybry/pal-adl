@@ -185,59 +185,6 @@ def render_layer1(conn, start_date_id: int, end_date_id: int):
 
     st.dataframe(styled, use_container_width=True)
 
-    st.download_button(
-        "⬇️ Export Layer 1 CSV",
-        data=df[["client_name", "domain_name", "primary_risk", "doc_risk", "red_count", "amber_count", "green_count"]].to_csv(index=False),
-        file_name=f"layer1_executive_grid_{start_date_id}_{end_date_id}.csv",
-        mime="text/csv",
-        key="layer1_export_csv",
-    )
-
-    st.markdown("### Drill-down")
-    client_lookup_df = pd.read_sql(
-        """
-        SELECT client_id, client_name
-        FROM dim_client
-        WHERE is_active = TRUE
-        ORDER BY client_name
-        """,
-        conn,
-    )
-    domain_lookup_df = pd.read_sql(DashboardQueries.get_domains(), conn)
-
-    available_clients = sorted(df["client_name"].dropna().unique().tolist())
-    available_domains = sorted(df["domain_name"].dropna().unique().tolist())
-
-    if available_clients and available_domains:
-        preferred_client = st.session_state.get("selected_client_name")
-        preferred_domain = st.session_state.get("selected_domain_name")
-        pick_col1, pick_col2, pick_col3 = st.columns([2, 2, 1])
-        with pick_col1:
-            nav_client_name = st.selectbox(
-                "Client",
-                options=available_clients,
-                index=get_default_index(available_clients, preferred_client),
-                key="layer1_nav_client",
-            )
-        with pick_col2:
-            nav_domain_name = st.selectbox(
-                "Domain",
-                options=available_domains,
-                index=get_default_index(available_domains, preferred_domain),
-                key="layer1_nav_domain",
-            )
-        with pick_col3:
-            st.markdown("&nbsp;", unsafe_allow_html=True)
-            if st.button("Open Layer 2", key="layer1_open_layer2"):
-                selected_client = client_lookup_df.loc[
-                    client_lookup_df["client_name"] == nav_client_name,
-                    ["client_id", "client_name"],
-                ]
-                if selected_client.empty:
-                    st.error("Selected client was not found in database lookup.")
-                else:
-                    selected_row = selected_client.iloc[0]
-                    open_layer2(int(selected_row["client_id"]), selected_row["client_name"], nav_domain_name)
 
     total_cells = len(df)
     red_count = int((df["primary_risk"] == "RED").sum())
@@ -251,11 +198,6 @@ def render_layer1(conn, start_date_id: int, end_date_id: int):
 
 
 def render_layer2(conn, start_date_id: int, end_date_id: int):
-    if st.button("← Back to Executive Grid", key="layer2_back_layer1"):
-        st.session_state["active_layer"] = LAYER_1
-        st.session_state["pending_layer"] = LAYER_1
-        st.rerun()
-
     clients_df = get_scored_clients(conn, start_date_id, end_date_id)
 
     if clients_df.empty:
@@ -371,46 +313,6 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
 
         st.dataframe(display_df, use_container_width=True)
 
-        st.download_button(
-            "⬇️ Export Layer 2 Residents CSV",
-            data=resident_df.to_csv(index=False),
-            file_name=f"layer2_residents_client_{selected_client_id}_{start_date_id}_{end_date_id}.csv",
-            mime="text/csv",
-            key="layer2_export_residents_csv",
-        )
-
-        st.markdown("### Drill-down")
-        resident_options = resident_df.set_index("resident_name")["resident_id"].to_dict()
-        resident_names = list(resident_options.keys())
-        preferred_resident_name = st.session_state.get("selected_resident_name")
-
-        domains_df = pd.read_sql(DashboardQueries.get_domains(), conn)
-        domain_names = domains_df["domain_name"].tolist()
-        preferred_domain_name = st.session_state.get("selected_domain_name")
-
-        nav_col1, nav_col2, nav_col3 = st.columns([2, 2, 1])
-        with nav_col1:
-            selected_resident_name = st.selectbox(
-                "Resident",
-                options=resident_names,
-                index=get_default_index(resident_names, preferred_resident_name),
-                key="layer2_nav_resident",
-            )
-        with nav_col2:
-            selected_domain_name = st.selectbox(
-                "Domain",
-                options=domain_names,
-                index=get_default_index(domain_names, preferred_domain_name),
-                key="layer2_nav_domain",
-            )
-        with nav_col3:
-            st.markdown("&nbsp;", unsafe_allow_html=True)
-            if st.button("Open Layer 3", key="layer2_open_layer3"):
-                open_layer3(
-                    int(resident_options[selected_resident_name]),
-                    selected_resident_name,
-                    selected_domain_name,
-                )
 
     st.markdown("### 30-Day Risk Trend")
     trend_query = DashboardQueries.layer2_trend_data(selected_client_id, days=30)
@@ -464,21 +366,9 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
         )
     )
     st.altair_chart(trend_chart, use_container_width=True)
-    st.download_button(
-        "⬇️ Export Trend CSV",
-        data=trend_df.to_csv(index=False),
-        file_name=f"layer2_trend_client_{selected_client_id}.csv",
-        mime="text/csv",
-        key="layer2_export_trend_csv",
-    )
 
 
 def render_layer3(conn, start_date_id: int, end_date_id: int):
-    if st.button("← Back to Client View", key="layer3_back_layer2"):
-        st.session_state["active_layer"] = LAYER_2
-        st.session_state["pending_layer"] = LAYER_2
-        st.rerun()
-
     clients_df = get_scored_clients(conn, start_date_id, end_date_id)
     if clients_df.empty:
         st.warning(
@@ -577,16 +467,6 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
         st.info("No score breakdown found for this resident/domain in the selected period.")
         return
 
-    st.download_button(
-        "⬇️ Export Score Breakdown CSV",
-        data=score_df.to_csv(index=False),
-        file_name=(
-            f"layer3_score_breakdown_resident_{selected_resident_id}_"
-            f"domain_{selected_domain_id}_{start_date_id}_{end_date_id}.csv"
-        ),
-        mime="text/csv",
-        key="layer3_export_score_csv",
-    )
 
     score = score_df.iloc[0]
     combined_risk = overall_risk(score["crs_level"], score["dcs_level"])
@@ -614,9 +494,13 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
             f"Expected/day: {float(score['expected_per_day']):.1f}" if pd.notna(score['expected_per_day']) else "Expected/day: N/A"
         )
 
-    st.markdown("### Recent Trend (Last 30 Snapshots)")
     period_days = int((DateHelper.date_id_to_date(end_date_id) - DateHelper.date_id_to_date(start_date_id)).days + 1)
     selected_end_date = DateHelper.date_id_to_date(end_date_id)
+    st.markdown("### Trend")
+    st.caption(
+        "Each point is the score for that end date using the currently selected lookback window. "
+        "This chart does not use event-level filtering."
+    )
 
     trend_df = pd.read_sql(
         """
@@ -651,6 +535,13 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
     else:
         trend_df = trend_df.sort_values("full_date")
         trend_df["dcs_capped"] = trend_df["dcs_percentage"].clip(upper=100)
+        date_axis_format = "%d %b" if period_days <= 30 else "%b %Y"
+
+        if trend_df["crs_total"].nunique() <= 1 and trend_df["dcs_percentage"].nunique() <= 1:
+            st.info(
+                "Trend is flat for the selected lookback window: stored CRS and DCS values are unchanged "
+                "across these recent snapshots."
+            )
 
         trend_col1, trend_col2 = st.columns(2)
 
@@ -659,8 +550,8 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
                 alt.Chart(trend_df)
                 .mark_line(point=True)
                 .encode(
-                    x=alt.X("full_date:T", title="Date"),
-                    y=alt.Y("crs_total:Q", title="CRS Points"),
+                    x=alt.X("full_date:T", title="Date", axis=alt.Axis(format=date_axis_format, labelAngle=-25)),
+                    y=alt.Y("crs_total:Q", title="CRS Points", scale=alt.Scale(domain=[0, 8])),
                     tooltip=["full_date:T", "crs_total:Q", "refusal_count:Q", "max_gap_hours:Q"],
                 )
             )
@@ -671,7 +562,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
                 alt.Chart(trend_df)
                 .mark_line(point=True)
                 .encode(
-                    x=alt.X("full_date:T", title="Date"),
+                    x=alt.X("full_date:T", title="Date", axis=alt.Axis(format=date_axis_format, labelAngle=-25)),
                     y=alt.Y("dcs_capped:Q", title="DCS % (capped at 100)", scale=alt.Scale(domain=[0, 100])),
                     tooltip=["full_date:T", "dcs_percentage:Q", "actual_entries:Q", "expected_entries:Q"],
                 )
@@ -684,8 +575,8 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
                 alt.Chart(trend_df)
                 .mark_line(point=True)
                 .encode(
-                    x=alt.X("full_date:T", title="Date"),
-                    y=alt.Y("max_gap_hours:Q", title="Max Gap (hours)"),
+                    x=alt.X("full_date:T", title="Date", axis=alt.Axis(format=date_axis_format, labelAngle=-25)),
+                    y=alt.Y("max_gap_hours:Q", title="Max Gap (hours)", scale=alt.Scale(zero=False)),
                     tooltip=["full_date:T", "max_gap_hours:Q"],
                 )
             )
@@ -696,8 +587,8 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
                 alt.Chart(trend_df)
                 .mark_line(point=True)
                 .encode(
-                    x=alt.X("full_date:T", title="Date"),
-                    y=alt.Y("actual_entries:Q", title="Actual Entries"),
+                    x=alt.X("full_date:T", title="Date", axis=alt.Axis(format=date_axis_format, labelAngle=-25)),
+                    y=alt.Y("actual_entries:Q", title="Actual Entries", scale=alt.Scale(zero=False)),
                     tooltip=["full_date:T", "actual_entries:Q", "expected_entries:Q"],
                 )
             )
@@ -745,16 +636,6 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
                 lambda val: round(float(val), 1) if pd.notna(val) else None
             )
         st.dataframe(timeline_df, use_container_width=True)
-        st.download_button(
-            "⬇️ Export Timeline CSV",
-            data=timeline_df.to_csv(index=False),
-            file_name=(
-                f"layer3_timeline_resident_{selected_resident_id}_"
-                f"domain_{selected_domain_id}_{start_date_id}_{end_date_id}.csv"
-            ),
-            mime="text/csv",
-            key="layer3_export_timeline_csv",
-        )
 
     st.markdown("### Assistance Distribution")
     assist_query = DashboardQueries.layer3_assistance_distribution(
@@ -798,16 +679,6 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
         ),
         use_container_width=True,
     )
-    st.download_button(
-        "⬇️ Export Assistance Distribution CSV",
-        data=assist_df.to_csv(index=False),
-        file_name=(
-            f"layer3_assistance_resident_{selected_resident_id}_"
-            f"domain_{selected_domain_id}_{start_date_id}_{end_date_id}.csv"
-        ),
-        mime="text/csv",
-        key="layer3_export_assistance_csv",
-    )
 
 
 def main():
@@ -824,7 +695,6 @@ def main():
         st.rerun()
 
     st.sidebar.header("Analysis Period")
-    period_days = st.sidebar.selectbox("Lookback (days)", [7, 14, 30], index=0)
     end_date = st.sidebar.date_input("End date", date.today())
 
     pending_layer = st.session_state.get("pending_layer")
@@ -840,6 +710,21 @@ def main():
         key="active_layer_selector",
     )
     st.session_state["active_layer"] = st.session_state.get("active_layer_selector", layer)
+
+    if layer == LAYER_3:
+        period_days = st.sidebar.selectbox(
+            "Lookback (days)",
+            [7, 14, 30, 365],
+            index=get_default_index([7, 14, 30, 365], st.session_state.get("layer3_period_days", 30)),
+            key="layer3_period_days",
+        )
+    else:
+        period_days = st.sidebar.selectbox(
+            "Lookback (days)",
+            [7, 14, 30],
+            index=get_default_index([7, 14, 30], st.session_state.get("layer12_period_days", 7)),
+            key="layer12_period_days",
+        )
 
     start_date_id, end_date_id = DateHelper.get_date_range(end_date, period_days)
 
