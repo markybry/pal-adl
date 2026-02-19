@@ -210,27 +210,34 @@ class DashboardQueries:
         Layer 2: Trend chart data (risk level counts over time)
         
         Shows how many residents were RED/AMBER/GREEN each day.
+        Uses each resident's worst CRS across domains for that day.
         """
         return """
-        WITH daily_scores AS (
+        WITH resident_daily_worst AS (
             SELECT 
+                s.resident_id,
                 dd.full_date,
-                s.crs_level,
-                COUNT(DISTINCT s.resident_id) AS resident_count
+                MAX(
+                    CASE s.crs_level
+                        WHEN 'RED' THEN 3
+                        WHEN 'AMBER' THEN 2
+                        ELSE 1
+                    END
+                ) AS worst_rank
             FROM fact_resident_domain_score s
             JOIN dim_resident r ON s.resident_id = r.resident_id
             JOIN dim_date dd ON s.end_date_id = dd.date_id
             WHERE r.client_id = %(client_id)s
               AND dd.full_date >= CURRENT_DATE - %(days)s
               AND r.is_active = TRUE
-            GROUP BY dd.full_date, s.crs_level
+            GROUP BY s.resident_id, dd.full_date
         )
         SELECT 
             full_date,
-            COALESCE(SUM(CASE WHEN crs_level = 'RED' THEN resident_count END), 0) AS red_count,
-            COALESCE(SUM(CASE WHEN crs_level = 'AMBER' THEN resident_count END), 0) AS amber_count,
-            COALESCE(SUM(CASE WHEN crs_level = 'GREEN' THEN resident_count END), 0) AS green_count
-        FROM daily_scores
+            COUNT(*) FILTER (WHERE worst_rank = 3) AS red_count,
+            COUNT(*) FILTER (WHERE worst_rank = 2) AS amber_count,
+            COUNT(*) FILTER (WHERE worst_rank = 1) AS green_count
+        FROM resident_daily_worst
         GROUP BY full_date
         ORDER BY full_date;
         """

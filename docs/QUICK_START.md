@@ -321,7 +321,7 @@ What you should see:
 - Client × Domain executive grid
 - Primary risk as traffic lights (CRS)
 - Documentation mismatch badge when DCS differs
-- 7/14/30/365-day period selector
+- 7/14/30-day period selector
 - Click-through drilldown flow (Layer 1 → Layer 2 → Layer 3)
 - CSV exports on each layer
 

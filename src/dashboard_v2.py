@@ -452,6 +452,14 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
                     range=["#d32f2f", "#f9a825", "#2e7d32"],
                 ),
             ),
+            strokeDash=alt.StrokeDash(
+                "risk_level:N",
+                title="Risk Line",
+                scale=alt.Scale(
+                    domain=["RED", "AMBER", "GREEN"],
+                    range=[[1, 0], [6, 3], [2, 2]],
+                ),
+            ),
             tooltip=["full_date:T", "risk_level:N", "resident_count:Q"],
         )
     )
@@ -606,6 +614,95 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
             f"Expected/day: {float(score['expected_per_day']):.1f}" if pd.notna(score['expected_per_day']) else "Expected/day: N/A"
         )
 
+    st.markdown("### Recent Trend (Last 30 Snapshots)")
+    period_days = int((DateHelper.date_id_to_date(end_date_id) - DateHelper.date_id_to_date(start_date_id)).days + 1)
+    selected_end_date = DateHelper.date_id_to_date(end_date_id)
+
+    trend_df = pd.read_sql(
+        """
+        SELECT
+            dd.full_date,
+            s.crs_total,
+            s.dcs_percentage,
+            s.refusal_count,
+            s.max_gap_hours,
+            s.actual_entries,
+            s.expected_entries
+        FROM fact_resident_domain_score s
+        JOIN dim_date dd ON dd.date_id = s.end_date_id
+        WHERE s.resident_id = %(resident_id)s
+          AND s.domain_id = %(domain_id)s
+          AND s.start_date_id = to_char(dd.full_date - (%(period_days)s::text || ' day')::interval + interval '1 day', 'YYYYMMDD')::int
+          AND dd.full_date <= %(selected_end_date)s
+        ORDER BY dd.full_date DESC
+        LIMIT 30
+        """,
+        conn,
+        params={
+            "resident_id": selected_resident_id,
+            "domain_id": selected_domain_id,
+            "period_days": period_days,
+            "selected_end_date": selected_end_date,
+        },
+    )
+
+    if trend_df.empty:
+        st.info("No recent trend snapshots available for this resident/domain.")
+    else:
+        trend_df = trend_df.sort_values("full_date")
+        trend_df["dcs_capped"] = trend_df["dcs_percentage"].clip(upper=100)
+
+        trend_col1, trend_col2 = st.columns(2)
+
+        with trend_col1:
+            crs_chart = (
+                alt.Chart(trend_df)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("full_date:T", title="Date"),
+                    y=alt.Y("crs_total:Q", title="CRS Points"),
+                    tooltip=["full_date:T", "crs_total:Q", "refusal_count:Q", "max_gap_hours:Q"],
+                )
+            )
+            st.altair_chart(crs_chart, use_container_width=True)
+
+        with trend_col2:
+            dcs_chart = (
+                alt.Chart(trend_df)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("full_date:T", title="Date"),
+                    y=alt.Y("dcs_capped:Q", title="DCS % (capped at 100)", scale=alt.Scale(domain=[0, 100])),
+                    tooltip=["full_date:T", "dcs_percentage:Q", "actual_entries:Q", "expected_entries:Q"],
+                )
+            )
+            st.altair_chart(dcs_chart, use_container_width=True)
+
+        drivers_col1, drivers_col2 = st.columns(2)
+        with drivers_col1:
+            gap_chart = (
+                alt.Chart(trend_df)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("full_date:T", title="Date"),
+                    y=alt.Y("max_gap_hours:Q", title="Max Gap (hours)"),
+                    tooltip=["full_date:T", "max_gap_hours:Q"],
+                )
+            )
+            st.altair_chart(gap_chart, use_container_width=True)
+
+        with drivers_col2:
+            entries_chart = (
+                alt.Chart(trend_df)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("full_date:T", title="Date"),
+                    y=alt.Y("actual_entries:Q", title="Actual Entries"),
+                    tooltip=["full_date:T", "actual_entries:Q", "expected_entries:Q"],
+                )
+            )
+            st.altair_chart(entries_chart, use_container_width=True)
+
     start_date = DateHelper.date_id_to_date(start_date_id)
     end_date = DateHelper.date_id_to_date(end_date_id)
     start_ts = datetime.combine(start_date, time.min)
@@ -727,7 +824,7 @@ def main():
         st.rerun()
 
     st.sidebar.header("Analysis Period")
-    period_days = st.sidebar.selectbox("Lookback (days)", [7, 14, 30, 365], index=0)
+    period_days = st.sidebar.selectbox("Lookback (days)", [7, 14, 30], index=0)
     end_date = st.sidebar.date_input("End date", date.today())
 
     pending_layer = st.session_state.get("pending_layer")
