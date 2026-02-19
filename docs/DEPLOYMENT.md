@@ -1,4 +1,4 @@
-# Streamlit Dashboard Deployment Guide
+# Streamlit Dashboard Deployment Guide (dashboard_v2)
 
 ## 🚀 Quick Deploy to Streamlit Community Cloud (FREE)
 
@@ -11,12 +11,12 @@
 
 2. **Push your code** to GitHub:
    ```bash
-   cd C:/Users/marky/code/data_analysis/pal/WeeklyChecks
+   cd C:/Users/marky/code/pal-adl
    git init
    git add .
-   git commit -m "Initial commit - CQC ADL Dashboard"
+   git commit -m "Deploy dashboard_v2"
    git branch -M main
-   git remote add origin https://github.com/YOUR_USERNAME/pal-weekly-checks.git
+   git remote add origin https://github.com/YOUR_USERNAME/pal-adl.git
    git push -u origin main
    ```
 
@@ -26,12 +26,12 @@
 2. **Sign in** with your GitHub account
 3. **Click "New app"**
 4. **Configure**:
-   - Repository: `YOUR_USERNAME/pal-weekly-checks`
+   - Repository: `YOUR_USERNAME/pal-adl`
    - Branch: `main`
-   - Main file path: `dashboard.py`
+   - Main file path: `src/dashboard_v2.py`
 5. **Click "Deploy"**
 
-🎉 Your app will be live at: `https://YOUR_USERNAME-pal-weekly-checks.streamlit.app`
+🎉 Your app will be live at: `https://YOUR_USERNAME-pal-adl.streamlit.app`
 
 ---
 
@@ -42,7 +42,7 @@
 ### Option A: Use Secrets Management (Recommended)
 1. Upload `logs.csv` to a secure cloud storage (Google Drive, Dropbox)
 2. Use Streamlit secrets to store access credentials
-3. Load data from cloud in `dashboard.py`
+3. Load data from cloud in `src/dashboard_v2.py`
 
 ### Option B: Deploy Locally/Privately
 - Use Docker + your own server
@@ -66,7 +66,7 @@ COPY . .
 
 EXPOSE 8501
 
-CMD ["streamlit", "run", "dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "src/dashboard_v2.py", "--server.port=8501", "--server.address=0.0.0.0"]
 ```
 
 ### Build and Run:
@@ -115,6 +115,14 @@ git push heroku main
 ---
 
 ## 📝 Notes
+
+## ✅ dashboard_v2 runtime checklist
+
+- Ensure `.env` contains PostgreSQL connection values (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`)
+- Ensure `fact_resident_domain_score` has current scores for your selected period
+- Verify login hash in Streamlit secrets (or use local default for testing only)
+- Confirm drilldown navigation works (Layer 1 → Layer 2 → Layer 3)
+- Confirm CSV export buttons work on all layers
 
 **For CQC compliance**: Ensure any public deployment complies with:
 - GDPR data protection requirements

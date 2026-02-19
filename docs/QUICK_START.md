@@ -309,9 +309,9 @@ Score Calculation Complete
 
 ---
 
-## Step 6: Launch Executive Dashboard (5 minutes)
+## Step 6: Launch Dashboard v2 (5 minutes)
 
-Run the new Layer 1 dashboard:
+Run the database-backed dashboard:
 
 ```bash
 streamlit run src/dashboard_v2.py
@@ -321,7 +321,14 @@ What you should see:
 - Client × Domain executive grid
 - Primary risk as traffic lights (CRS)
 - Documentation mismatch badge when DCS differs
-- 7/14/30-day period selector
+- 7/14/30/365-day period selector
+- Click-through drilldown flow (Layer 1 → Layer 2 → Layer 3)
+- CSV exports on each layer
+
+How to navigate:
+1. Start in Layer 1 and choose a client/domain in the Drill-down section.
+2. Open Layer 2, then pick a resident/domain and open Layer 3.
+3. Use back buttons to return to prior layers.
 
 If no data appears, calculate scores first with:
 

@@ -2,6 +2,46 @@
 
 Utility scripts for the Care Analytics System.
 
+## Copy/Paste Commands (Bash)
+
+Use these exactly as-is in terminal:
+
+```bash
+python scripts/import_csv_to_db.py "/c/Users/marky/Downloads/LMC export 19-02-2026 19_53_14/logs.csv" --client "Primary Access Ltd"
+python scripts/backfill_scores.py --client "Primary Access Ltd"
+streamlit run src/dashboard_v2.py
+```
+
+Do not include markdown link syntax like `[name](url)` in terminal commands.
+
+## backfill_scores.py
+
+Backfills daily score snapshots over a date range using the same scoring logic as
+`calculate_scores.py`.
+
+### Usage
+
+Default: backfill last 30 days ending today, for 7/14/30-day windows:
+
+```bash
+python scripts/backfill_scores.py
+```
+
+Custom range:
+
+```bash
+python scripts/backfill_scores.py --start-date 2026-01-20 --end-date 2026-02-19
+```
+
+Custom windows and single client:
+
+```bash
+python scripts/backfill_scores.py --periods 7,14,30 --client "Primary Access Ltd"
+```
+
+This is idempotent for the same `(resident, domain, start_date_id, end_date_id)`
+because scores are upserted.
+
 ## import_csv_to_db.py
 
 ETL script to import care log CSV files into PostgreSQL.

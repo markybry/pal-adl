@@ -22,6 +22,7 @@ pal-adl/
 ├── src/                    # Python source code
 │   ├── scoring_engine.py
 │   ├── dashboard_queries.py
+│   ├── dashboard_v2.py
 │   ├── dashboard.py
 │   └── weeklyCareLogChecks.py
 │
@@ -46,6 +47,7 @@ pal-adl/
 │   └── generate_password.py
 │
 ├── scripts/                # Utility scripts
+│   ├── calculate_scores.py
 │   ├── import_csv_to_db.py
 │   └── README.md
 │
@@ -101,6 +103,12 @@ pal-adl/
 streamlit run src/dashboard.py
 ```
 
+### New System Dashboard (Database-backed)
+
+```bash
+streamlit run src/dashboard_v2.py
+```
+
 ### New System (After Migration)
 
 See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for complete setup instructions.
@@ -128,6 +136,11 @@ See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for complete set
 1. **Executive Grid**: Client × Domain matrix with traffic lights
 2. **Client View**: Resident breakdown with trend analysis
 3. **Resident Deep Dive**: Event timeline with full score explanations
+
+**Dashboard v2 UX**:
+- Click-through drilldown: Layer 1 → Layer 2 → Layer 3
+- Back navigation between layers
+- CSV export actions on all layers (grid, residents, trend, score, timeline, assistance)
 
 **Star Schema Database**:
 - Multi-client support
