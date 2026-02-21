@@ -23,9 +23,12 @@ def load_environment():
         dotenv_path = Path(env_file)
         if not dotenv_path.is_absolute():
             dotenv_path = PROJECT_ROOT / dotenv_path
-        load_dotenv(dotenv_path=dotenv_path, override=True)
+        if dotenv_path.exists():
+            load_dotenv(dotenv_path=dotenv_path, override=True)
     else:
-        load_dotenv()
+        dotenv_path = PROJECT_ROOT / ".env"
+        if dotenv_path.exists():
+            load_dotenv(dotenv_path=dotenv_path, override=False)
 
 
 load_environment()
@@ -99,18 +102,23 @@ def check_password() -> bool:
 
 @st.cache_resource
 def get_db_connection():
-    host = os.getenv("DB_HOST", "localhost")
-    sslmode = os.getenv(
+    def config_value(key: str, default: str) -> str:
+        if key in st.secrets:
+            return str(st.secrets[key])
+        return os.getenv(key, default)
+
+    host = config_value("DB_HOST", "localhost")
+    sslmode = config_value(
         "DB_SSLMODE",
         "prefer" if host in {"localhost", "127.0.0.1"} else "require",
     )
 
     return psycopg2.connect(
-        dbname=os.getenv("DB_NAME", "care_analytics"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD", "postgres"),
+        dbname=config_value("DB_NAME", "care_analytics"),
+        user=config_value("DB_USER", "postgres"),
+        password=config_value("DB_PASSWORD", "postgres"),
         host=host,
-        port=int(os.getenv("DB_PORT", "5432")),
+        port=int(config_value("DB_PORT", "5432")),
         sslmode=sslmode,
     )
 

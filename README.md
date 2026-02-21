@@ -119,6 +119,10 @@ streamlit run src/dashboard.py
 streamlit run src/dashboard_v2.py
 ```
 
+`dashboard_v2.py` loads DB settings from `.env` (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, optional `DB_SSLMODE`).
+On Windows, you can run `run_dashboard.bat` to launch with `ENV_FILE=.env` automatically.
+For DB roles, use `care_app_ro` for the dashboard (read-only) and reserve `care_app_rw` for ETL/import scripts that write data.
+
 ### New System (After Migration)
 
 See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for complete setup instructions.
@@ -131,6 +135,7 @@ See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for complete set
 
 - **Default password:** `admin123` (⚠️ Change immediately!)
 - See [PASSWORD_SETUP.md](docs/PASSWORD_SETUP.md) for configuration
+- Rotate any default DB role passwords before production deployment.
 ---
 
 ## ✨ Key Features

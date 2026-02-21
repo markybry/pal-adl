@@ -119,10 +119,13 @@ git push heroku main
 ## ✅ dashboard_v2 runtime checklist
 
 - Ensure `.env` contains PostgreSQL connection values (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`)
+- Use `DB_USER=care_app_ro` for the dashboard app (read-only)
+- Reserve `care_app_rw` for ETL/import jobs that require writes
 - Ensure `fact_resident_domain_score` has current scores for your selected period
 - Verify login hash in Streamlit secrets (or use local default for testing only)
 - Confirm drilldown navigation works (Layer 1 → Layer 2 → Layer 3)
 - Confirm CSV export buttons work on all layers
+- Rotate any default DB role passwords before production use
 
 **For CQC compliance**: Ensure any public deployment complies with:
 - GDPR data protection requirements
