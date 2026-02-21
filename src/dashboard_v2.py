@@ -39,6 +39,30 @@ LAYER_3 = "Layer 3 - Resident Deep Dive"
 LAYER_OPTIONS = [LAYER_1, LAYER_2, LAYER_3]
 
 
+def config_value(key: str, default: str) -> str:
+    env_value = os.getenv(key)
+    if env_value not in (None, ""):
+        return env_value
+    if key in st.secrets:
+        return str(st.secrets[key])
+    return default
+
+
+def get_connection_context() -> dict[str, str]:
+    host = config_value("DB_HOST", "localhost")
+    is_local_host = host in {"localhost", "127.0.0.1", "::1"}
+    sslmode = config_value("DB_SSLMODE", "prefer" if is_local_host else "require")
+    env_file = os.getenv("ENV_FILE") or ".env"
+
+    return {
+        "env_file": env_file,
+        "db_name": config_value("DB_NAME", "care_analytics"),
+        "db_host": host,
+        "db_port": config_value("DB_PORT", "5432"),
+        "sslmode": sslmode,
+    }
+
+
 def get_default_index(options, preferred_value):
     if preferred_value in options:
         return options.index(preferred_value)
@@ -102,28 +126,28 @@ def check_password() -> bool:
 
 @st.cache_resource
 def get_db_connection():
-    def config_value(key: str, default: str) -> str:
-        env_value = os.getenv(key)
-        if env_value not in (None, ""):
-            return env_value
-        if key in st.secrets:
-            return str(st.secrets[key])
-        return default
+    context = get_connection_context()
+    host = context["db_host"]
+    is_local_host = host in {"localhost", "127.0.0.1", "::1"}
+    sslmode = context["sslmode"]
 
-    host = config_value("DB_HOST", "localhost")
-    sslmode = config_value(
-        "DB_SSLMODE",
-        "prefer" if host in {"localhost", "127.0.0.1"} else "require",
-    )
+    connect_kwargs = {
+        "dbname": context["db_name"],
+        "user": config_value("DB_USER", "postgres"),
+        "password": config_value("DB_PASSWORD", "postgres"),
+        "host": host,
+        "port": int(context["db_port"]),
+        "sslmode": sslmode,
+    }
 
-    return psycopg2.connect(
-        dbname=config_value("DB_NAME", "care_analytics"),
-        user=config_value("DB_USER", "postgres"),
-        password=config_value("DB_PASSWORD", "postgres"),
-        host=host,
-        port=int(config_value("DB_PORT", "5432")),
-        sslmode=sslmode,
-    )
+    try:
+        return psycopg2.connect(**connect_kwargs)
+    except psycopg2.OperationalError as exc:
+        error_text = str(exc).lower()
+        if is_local_host and "server does not support ssl" in error_text and sslmode != "prefer":
+            connect_kwargs["sslmode"] = "prefer"
+            return psycopg2.connect(**connect_kwargs)
+        raise
 
 
 def risk_badge(risk: str) -> str:
@@ -730,6 +754,24 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
 
 def main():
     st.set_page_config(page_title="Care Analytics Dashboard", page_icon="🏥", layout="wide")
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stSidebar"] .env-footer-hidden {
+            position: fixed;
+            bottom: 0.6rem;
+            left: 1rem;
+            right: 1rem;
+            color: var(--secondary-background-color) !important;
+            font-size: 0.72rem;
+            line-height: 1.25;
+            user-select: text;
+            z-index: 1000;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if not check_password():
         st.stop()
@@ -788,6 +830,18 @@ def main():
         render_layer2(conn, start_date_id, end_date_id)
     else:
         render_layer3(conn, start_date_id, end_date_id)
+
+    connection_context = get_connection_context()
+    st.sidebar.markdown(
+        (
+            '<div class="env-footer-hidden">'
+            f"env: {connection_context['env_file']}<br>"
+            f"db: {connection_context['db_name']} @ {connection_context['db_host']}:{connection_context['db_port']}<br>"
+            f"ssl: {connection_context['sslmode']}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":

@@ -23,7 +23,6 @@ pal-adl/
 │   ├── scoring_engine.py
 │   ├── dashboard_queries.py
 │   ├── dashboard_v2.py
-│   ├── dashboard.py
 │   └── weeklyCareLogChecks.py
 │
 ├── database/               # Database files
@@ -74,10 +73,9 @@ pal-adl/
 - 📊 **[dashboard_queries.py](src/dashboard_queries.py)** - SQL query builder for all layers
 - ✅ **[test_scoring_engine.py](tests/test_scoring_engine.py)** - Complete test suite (31 tests)
 
-### Current System (Legacy)
+### Supporting Files
 
-- 📱 **[dashboard.py](src/dashboard.py)** - Current Streamlit dashboard (CSV-based)
-- 🔍 **[weeklyCareLogChecks.py](src/weeklyCareLogChecks.py)** - Current analysis logic
+- 🔍 **[weeklyCareLogChecks.py](src/weeklyCareLogChecks.py)** - Legacy analysis logic reference
 - 🔐 **[PASSWORD_SETUP.md](docs/PASSWORD_SETUP.md)** - Authentication configuration
 
 ---
@@ -107,12 +105,6 @@ pal-adl/
    DB_SSLMODE=require
    ```
 
-### Current System (CSV-based)
-
-```bash
-streamlit run src/dashboard.py
-```
-
 ### New System Dashboard (Database-backed)
 
 ```bash
@@ -121,7 +113,34 @@ streamlit run streamlit_app.py
 
 `streamlit_app.py` runs `src/dashboard_v2.py`.
 `dashboard_v2.py` loads DB settings from `.env` (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, optional `DB_SSLMODE`).
-On Windows, you can run `run_dashboard.bat` to launch with `ENV_FILE=.env` automatically.
+For Linux/macOS, use the Make targets:
+
+```bash
+make local
+make staging
+```
+
+If `make` is not installed, use the shell runner directly:
+
+```bash
+./scripts/run_dashboard.sh local
+./scripts/run_dashboard.sh staging
+```
+
+PowerShell equivalent:
+
+```powershell
+./scripts/run_dashboard.ps1 -Mode local
+./scripts/run_dashboard.ps1 -Mode staging
+```
+
+To opt-in to automatic Windows PostgreSQL service checks/starts:
+
+```powershell
+./scripts/run_dashboard.ps1 -Mode local -ManagePostgres
+```
+
+On Windows, you can still run `run_dashboard.bat` to launch with `ENV_FILE=.env` automatically.
 For DB roles, use `care_app_ro` for the dashboard (read-only) and reserve `care_app_rw` for ETL/import scripts that write data.
 
 **Run locally with a specific env file**
@@ -219,7 +238,7 @@ See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for complete set
 
 ### Current System
 ```
-logs.csv → pandas → weeklyCareLogChecks.py → dashboard.py
+logs.csv → pandas → weeklyCareLogChecks.py → Streamlit UI
 ```
 
 ### New System
@@ -287,9 +306,7 @@ See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for detailed ste
 
 ### Current System
 - Python 3.8+
-- Streamlit
-- Pandas
-- logs.csv file
+- Pandas (for legacy analysis scripts)
 
 ### New System
 - Python 3.8+

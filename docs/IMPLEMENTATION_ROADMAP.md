@@ -9,7 +9,7 @@
 **Files:**
 - `logs.csv` - Raw care log exports
 - `weeklyCareLogChecks.py` - Analysis logic
-- `dashboard.py` - Streamlit UI
+- `dashboard_v2.py` - Streamlit UI
 
 **Architecture:**
 - CSV file loaded into pandas DataFrame

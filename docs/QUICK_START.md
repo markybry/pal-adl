@@ -316,8 +316,28 @@ Score Calculation Complete
 Run the database-backed dashboard:
 
 ```bash
-streamlit run src/dashboard_v2.py
+make local
 ```
+
+If `make` is not installed:
+
+```bash
+./scripts/run_dashboard.sh local
+```
+
+PowerShell equivalent:
+
+```powershell
+./scripts/run_dashboard.ps1 -Mode local
+```
+
+Windows CMD fallback:
+
+```cmd
+run_dashboard.bat
+```
+
+For staging config, use `make staging`, `./scripts/run_dashboard.sh staging`, or `./scripts/run_dashboard.ps1 -Mode staging`.
 
 What you should see:
 - Client × Domain executive grid

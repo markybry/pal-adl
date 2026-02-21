@@ -30,7 +30,7 @@ password_hash = "your_generated_hash_here"
 
 ### Step 4: Restart Dashboard
 ```bash
-python -m streamlit run dashboard.py
+python -m streamlit run streamlit_app.py
 ```
 
 ## 🔒 Security Features
@@ -75,7 +75,7 @@ Use environment variables:
 ENV STREAMLIT_PASSWORD_HASH="your_hash"
 ```
 
-Update dashboard.py to read from env vars if needed.
+Update `src/dashboard_v2.py` to read from env vars if needed.
 
 ## 🆘 Forgot Password?
 
