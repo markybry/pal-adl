@@ -97,6 +97,16 @@ pal-adl/
    # Edit .env with your PostgreSQL password
    ```
 
+   **Using Neon (cloud Postgres):**
+   ```env
+   DB_NAME=neondb
+   DB_USER=<your_neon_user>
+   DB_PASSWORD=<your_neon_password>
+   DB_HOST=<your_neon_host>
+   DB_PORT=5432
+   DB_SSLMODE=require
+   ```
+
 ### Current System (CSV-based)
 
 ```bash
@@ -220,6 +230,7 @@ Ran 31 tests in 0.004s
 **Phase 1: Database Setup** (Week 1)
 - Install PostgreSQL
 - Run `database/schema.sql`
+- Run `database/migrations/003_create_app_roles.sql` (create app users/roles)
 - Populate dimensions
 
 **Phase 2: Data Import** (Week 1-2)

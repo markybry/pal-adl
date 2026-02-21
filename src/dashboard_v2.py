@@ -17,7 +17,18 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.dashboard_queries import DashboardQueries, DateHelper
 
-load_dotenv()
+def load_environment():
+    env_file = os.getenv("ENV_FILE")
+    if env_file:
+        dotenv_path = Path(env_file)
+        if not dotenv_path.is_absolute():
+            dotenv_path = PROJECT_ROOT / dotenv_path
+        load_dotenv(dotenv_path=dotenv_path, override=True)
+    else:
+        load_dotenv()
+
+
+load_environment()
 
 LAYER_1 = "Layer 1 - Executive Grid"
 LAYER_2 = "Layer 2 - Client View"
@@ -88,12 +99,19 @@ def check_password() -> bool:
 
 @st.cache_resource
 def get_db_connection():
+    host = os.getenv("DB_HOST", "localhost")
+    sslmode = os.getenv(
+        "DB_SSLMODE",
+        "prefer" if host in {"localhost", "127.0.0.1"} else "require",
+    )
+
     return psycopg2.connect(
         dbname=os.getenv("DB_NAME", "care_analytics"),
         user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("DB_PASSWORD", "postgres"),
-        host=os.getenv("DB_HOST", "localhost"),
+        host=host,
         port=int(os.getenv("DB_PORT", "5432")),
+        sslmode=sslmode,
     )
 
 

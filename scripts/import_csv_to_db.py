@@ -12,11 +12,20 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Load environment variables from .env file (or ENV_FILE override)
+env_file = os.getenv('ENV_FILE')
+if env_file:
+    dotenv_path = Path(env_file)
+    if not dotenv_path.is_absolute():
+        dotenv_path = PROJECT_ROOT / dotenv_path
+    load_dotenv(dotenv_path=dotenv_path, override=True)
+else:
+    load_dotenv()
 
 # Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.scoring_engine import parse_assistance_level, is_refusal
 
@@ -30,7 +39,8 @@ DB_CONFIG = {
     'user': os.getenv('DB_USER', 'postgres'),
     'password': os.getenv('DB_PASSWORD', 'postgres'),  # Default: 'postgres' - CHANGE THIS!
     'host': os.getenv('DB_HOST', 'localhost'),
-    'port': int(os.getenv('DB_PORT', '5432'))
+    'port': int(os.getenv('DB_PORT', '5432')),
+    'sslmode': os.getenv('DB_SSLMODE', 'prefer')
 }
 
 # NOTE: Set environment variable DB_PASSWORD or edit the default above
@@ -475,6 +485,12 @@ def main():
                        help='Database user (default: postgres)')
     parser.add_argument('--dbname',
                        help='Database name (default: care_analytics)')
+    parser.add_argument('--host',
+                       help='Database host (default: localhost)')
+    parser.add_argument('--port', type=int,
+                       help='Database port (default: 5432)')
+    parser.add_argument('--sslmode',
+                       help='Database SSL mode (e.g. require, prefer, disable)')
     
     args = parser.parse_args()
     
@@ -485,6 +501,12 @@ def main():
         DB_CONFIG['user'] = args.user
     if args.dbname:
         DB_CONFIG['dbname'] = args.dbname
+    if args.host:
+        DB_CONFIG['host'] = args.host
+    if args.port:
+        DB_CONFIG['port'] = args.port
+    if args.sslmode:
+        DB_CONFIG['sslmode'] = args.sslmode
     
     print("="*60)
     print("Care Analytics - CSV Import Tool")

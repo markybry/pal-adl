@@ -59,6 +59,7 @@ def parse_args():
     parser.add_argument("--dbname", help="Database name override")
     parser.add_argument("--host", help="Database host override")
     parser.add_argument("--port", type=int, help="Database port override")
+    parser.add_argument("--sslmode", help="Database SSL mode override")
     return parser.parse_args()
 
 

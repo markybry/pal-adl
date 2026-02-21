@@ -14,9 +14,18 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import psycopg2
 from dotenv import load_dotenv
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+env_file = os.getenv("ENV_FILE")
+if env_file:
+    dotenv_path = Path(env_file)
+    if not dotenv_path.is_absolute():
+        dotenv_path = PROJECT_ROOT / dotenv_path
+    load_dotenv(dotenv_path=dotenv_path, override=True)
+else:
+    load_dotenv()
+
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.dashboard_queries import DateHelper
 from src.scoring_engine import ADLEvent, AssistanceLevel, ScoringEngine
@@ -28,6 +37,7 @@ DB_CONFIG = {
     "password": os.getenv("DB_PASSWORD", "postgres"),
     "host": os.getenv("DB_HOST", "localhost"),
     "port": int(os.getenv("DB_PORT", "5432")),
+    "sslmode": os.getenv("DB_SSLMODE", "prefer"),
 }
 
 
@@ -296,6 +306,7 @@ def parse_args():
     parser.add_argument("--dbname", help="Database name override")
     parser.add_argument("--host", help="Database host override")
     parser.add_argument("--port", type=int, help="Database port override")
+    parser.add_argument("--sslmode", help="Database SSL mode override")
     return parser.parse_args()
 
 
@@ -310,6 +321,8 @@ def apply_cli_db_overrides(args):
         DB_CONFIG["host"] = args.host
     if args.port:
         DB_CONFIG["port"] = args.port
+    if args.sslmode:
+        DB_CONFIG["sslmode"] = args.sslmode
 
 
 def main():

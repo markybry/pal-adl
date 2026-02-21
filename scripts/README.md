@@ -7,12 +7,38 @@ Utility scripts for the Care Analytics System.
 Use these exactly as-is in terminal:
 
 ```bash
+psql "host=<your_neon_host> port=5432 dbname=neondb user=<root_user> sslmode=require" -f database/migrations/003_create_app_roles.sql
+ENV_FILE=.env.staging python scripts/run_sql.py database/migrations/003_create_app_roles.sql
 python scripts/import_csv_to_db.py "/c/Users/marky/Downloads/LMC export 19-02-2026 19_53_14/logs.csv" --client "Primary Access Ltd"
 python scripts/backfill_scores.py --client "Primary Access Ltd"
 streamlit run src/dashboard_v2.py
 ```
 
 Do not include markdown link syntax like `[name](url)` in terminal commands.
+
+## run_sql.py
+
+Runs a `.sql` file against the configured PostgreSQL database.
+
+### Usage
+
+Default `.env`:
+
+```bash
+python scripts/run_sql.py database/migrations/003_create_app_roles.sql
+```
+
+Staging `.env` file:
+
+```bash
+ENV_FILE=.env.staging python scripts/run_sql.py database/migrations/003_create_app_roles.sql
+```
+
+Override connection values from CLI:
+
+```bash
+ENV_FILE=.env.staging python scripts/run_sql.py database/migrations/003_create_app_roles.sql --user neondb_owner --sslmode require
+```
 
 ## backfill_scores.py
 
@@ -70,6 +96,17 @@ DB_USER=postgres
 DB_PASSWORD=your_actual_password
 DB_HOST=localhost
 DB_PORT=5432
+DB_SSLMODE=prefer
+```
+
+For Neon:
+```env
+DB_NAME=neondb
+DB_USER=care_app_rw
+DB_PASSWORD=your_app_password
+DB_HOST=your-neon-host.neon.tech
+DB_PORT=5432
+DB_SSLMODE=require
 ```
 
 **3. Enable idempotent imports (one-time migration)**
@@ -130,6 +167,9 @@ python scripts/import_csv_to_db.py "C:\path\to\logs.csv" \
 - `--password`, `-p` - Database password
 - `--user` - Database user (default: postgres)
 - `--dbname` - Database name (default: care_analytics)
+- `--host` - Database host (default: localhost)
+- `--port` - Database port (default: 5432)
+- `--sslmode` - Database SSL mode (`prefer`, `require`, `disable`)
 - `--client NAME` - Client/organization name (default: "Default Care Home")
 - `--limit N` - Import only first N rows (useful for testing)
 - `--date-format FORMAT` - Date format in CSV (default: `%d/%m/%Y %H:%M:%S`)
