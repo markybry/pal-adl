@@ -116,12 +116,28 @@ streamlit run src/dashboard.py
 ### New System Dashboard (Database-backed)
 
 ```bash
-streamlit run src/dashboard_v2.py
+streamlit run streamlit_app.py
 ```
 
+`streamlit_app.py` runs `src/dashboard_v2.py`.
 `dashboard_v2.py` loads DB settings from `.env` (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, optional `DB_SSLMODE`).
 On Windows, you can run `run_dashboard.bat` to launch with `ENV_FILE=.env` automatically.
 For DB roles, use `care_app_ro` for the dashboard (read-only) and reserve `care_app_rw` for ETL/import scripts that write data.
+
+**Run locally with a specific env file**
+
+- Git Bash:
+   ```bash
+   ENV_FILE=.env.staging streamlit run streamlit_app.py
+   ```
+- PowerShell:
+   ```powershell
+   $env:ENV_FILE=".env.staging"; streamlit run streamlit_app.py
+   ```
+- CMD:
+   ```cmd
+   set ENV_FILE=.env.staging && streamlit run streamlit_app.py
+   ```
 
 ### New System (After Migration)
 

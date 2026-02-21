@@ -103,9 +103,12 @@ def check_password() -> bool:
 @st.cache_resource
 def get_db_connection():
     def config_value(key: str, default: str) -> str:
+        env_value = os.getenv(key)
+        if env_value not in (None, ""):
+            return env_value
         if key in st.secrets:
             return str(st.secrets[key])
-        return os.getenv(key, default)
+        return default
 
     host = config_value("DB_HOST", "localhost")
     sslmode = config_value(
@@ -183,6 +186,24 @@ def risk_rank(risk: str) -> int:
 
 def overall_risk(crs_level: str, dcs_level: str) -> str:
     return crs_level if risk_rank(crs_level) >= risk_rank(dcs_level) else dcs_level
+
+
+def get_latest_scored_end_date(conn) -> date | None:
+    latest_df = pd.read_sql(
+        """
+        SELECT MAX(end_date_id) AS max_end_date_id
+        FROM fact_resident_domain_score
+        """,
+        conn,
+    )
+    if latest_df.empty:
+        return None
+
+    max_end_date_id = latest_df.iloc[0]["max_end_date_id"]
+    if pd.isna(max_end_date_id):
+        return None
+
+    return DateHelper.date_id_to_date(int(max_end_date_id))
 
 
 def render_layer1(conn, start_date_id: int, end_date_id: int):
@@ -720,8 +741,11 @@ def main():
         st.session_state["password_correct"] = False
         st.rerun()
 
+    conn = get_db_connection()
+    default_end_date = get_latest_scored_end_date(conn) or date.today()
+
     st.sidebar.header("Analysis Period")
-    end_date = st.sidebar.date_input("End date", date.today())
+    end_date = st.sidebar.date_input("End date", default_end_date, key="analysis_end_date")
 
     pending_layer = st.session_state.get("pending_layer")
     if pending_layer in LAYER_OPTIONS:
@@ -754,7 +778,6 @@ def main():
 
     start_date_id, end_date_id = DateHelper.get_date_range(end_date, period_days)
 
-    conn = get_db_connection()
     st.caption(
         f"Analysis period: {DateHelper.date_id_to_date(start_date_id)} to {DateHelper.date_id_to_date(end_date_id)}"
     )
