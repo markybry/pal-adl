@@ -28,7 +28,7 @@ else:
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.dashboard_queries import DateHelper
-from src.scoring_engine import ADLEvent, AssistanceLevel, ScoringEngine
+from src.scoring_engine import ADLEvent, AssistanceLevel, ScoringEngine, is_refusal
 
 
 DB_CONFIG = {
@@ -134,6 +134,11 @@ def fetch_events(cursor, resident_id: int, domain_id: int, start_dt: datetime, e
 def to_adl_events(rows) -> List[ADLEvent]:
     events: List[ADLEvent] = []
     for row in rows:
+        description = row[5]
+        title = row[4]
+        has_text_context = bool((description and str(description).strip()) or (title and str(title).strip()))
+        effective_refusal = is_refusal(description, title) if has_text_context else bool(row[3])
+
         assistance_value = row[2] if row[2] else AssistanceLevel.NOT_SPECIFIED.value
         try:
             assistance_level = AssistanceLevel(assistance_value)
@@ -145,9 +150,9 @@ def to_adl_events(rows) -> List[ADLEvent]:
                 event_timestamp=row[0],
                 logged_timestamp=row[1],
                 assistance_level=assistance_level,
-                is_refusal=bool(row[3]),
-                event_title=row[4],
-                event_description=row[5],
+                is_refusal=effective_refusal,
+                event_title=title,
+                event_description=description,
             )
         )
     return events

@@ -502,6 +502,10 @@ def parse_assistance_level(description: str, title: str = '') -> AssistanceLevel
         title = ''
     
     combined = (description + ' ' + title).lower()
+
+    away_keywords = [' away', 'away ', 'away.', 'away,', 'on leave', 'out with family', 'at hospital']
+    if any(keyword in combined for keyword in away_keywords):
+        return AssistanceLevel.NOT_SPECIFIED
     
     # Check for refusal keywords first
     refusal_keywords = ['refused', 'declined', "didn't want", 'did not want', 'skipped']
@@ -526,6 +530,10 @@ def parse_assistance_level(description: str, title: str = '') -> AssistanceLevel
 def is_refusal(description: str, title: str = '') -> bool:
     """Check if event indicates a refusal"""
     combined = (str(description) + ' ' + str(title)).lower()
+    away_keywords = [' away', 'away ', 'away.', 'away,', 'on leave', 'out with family', 'at hospital']
+    if any(keyword in combined for keyword in away_keywords):
+        return False
+
     refusal_keywords = ['refused', 'declined', "didn't want", 'did not want', 'skipped']
     return any(keyword in combined for keyword in refusal_keywords)
 

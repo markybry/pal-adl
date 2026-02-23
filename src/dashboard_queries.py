@@ -87,7 +87,11 @@ class DashboardQueries:
                     WHEN 'AMBER' THEN 2 
                     WHEN 'N/A' THEN 0
                     ELSE 1 
-                END AS dcs_rank
+                END AS dcs_rank,
+                GREATEST(
+                    CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END,
+                    CASE s.dcs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 WHEN 'N/A' THEN 0 ELSE 1 END
+                ) AS overall_rank
             FROM fact_resident_domain_score s
             JOIN dim_resident r ON s.resident_id = r.resident_id
             JOIN dim_client c ON r.client_id = c.client_id
@@ -100,8 +104,8 @@ class DashboardQueries:
         SELECT 
             client_name,
             domain_name,
-            -- Primary indicator: worst CRS in this client-domain
-            CASE MAX(crs_rank)
+            -- Primary indicator: worst OVERALL risk (CRS vs DCS) in this client-domain
+            CASE MAX(overall_rank)
                 WHEN 3 THEN 'RED'
                 WHEN 2 THEN 'AMBER'
                 ELSE 'GREEN'
@@ -113,10 +117,10 @@ class DashboardQueries:
                 WHEN 0 THEN 'N/A'
                 ELSE 'GREEN'
             END AS doc_risk,
-            -- Resident counts at each risk level
-            COUNT(*) FILTER (WHERE crs_level = 'RED') AS red_count,
-            COUNT(*) FILTER (WHERE crs_level = 'AMBER') AS amber_count,
-            COUNT(*) FILTER (WHERE crs_level = 'GREEN') AS green_count
+            -- Resident counts at each OVERALL risk level
+            COUNT(*) FILTER (WHERE overall_rank = 3) AS red_count,
+            COUNT(*) FILTER (WHERE overall_rank = 2) AS amber_count,
+            COUNT(*) FILTER (WHERE overall_rank = 1) AS green_count
         FROM resident_scores
         GROUP BY client_name, domain_name
         ORDER BY client_name, domain_name;
@@ -151,15 +155,24 @@ class DashboardQueries:
                 r.resident_id,
                 r.resident_name,
                 MAX(
-                    CASE s.crs_level 
-                        WHEN 'RED' THEN 3 
-                        WHEN 'AMBER' THEN 2 
-                        ELSE 1 
-                    END
+                    GREATEST(
+                        CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END,
+                        CASE s.dcs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 WHEN 'N/A' THEN 0 ELSE 1 END
+                    )
                 ) AS worst_crs_rank,
                 CASE 
-                    WHEN MAX(CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END) = 3 THEN 'RED'
-                    WHEN MAX(CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END) = 2 THEN 'AMBER'
+                    WHEN MAX(
+                        GREATEST(
+                            CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END,
+                            CASE s.dcs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 WHEN 'N/A' THEN 0 ELSE 1 END
+                        )
+                    ) = 3 THEN 'RED'
+                    WHEN MAX(
+                        GREATEST(
+                            CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END,
+                            CASE s.dcs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 WHEN 'N/A' THEN 0 ELSE 1 END
+                        )
+                    ) = 2 THEN 'AMBER'
                     ELSE 'GREEN'
                 END AS overall_risk
             FROM dim_resident r
@@ -175,19 +188,23 @@ class DashboardQueries:
             rwr.resident_name,
             rwr.overall_risk,
             -- Domain-specific scores (pivoted for common domains)
-            MAX(CASE WHEN d.domain_name = 'Washing/Bathing' THEN s.crs_level END) AS washing_risk,
-            MAX(CASE WHEN d.domain_name = 'Oral Care' THEN s.crs_level END) AS oral_care_risk,
-            MAX(CASE WHEN d.domain_name = 'Dressing/Clothing' THEN s.crs_level END) AS dressing_risk,
-            MAX(CASE WHEN d.domain_name = 'Toileting' THEN s.crs_level END) AS toileting_risk,
-            MAX(CASE WHEN d.domain_name = 'Grooming' THEN s.crs_level END) AS grooming_risk,
+            MAX(CASE WHEN d.domain_name = 'Washing/Bathing' THEN CASE GREATEST(CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END, CASE s.dcs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 WHEN 'N/A' THEN 0 ELSE 1 END) WHEN 3 THEN 'RED' WHEN 2 THEN 'AMBER' ELSE 'GREEN' END END) AS washing_risk,
+            MAX(CASE WHEN d.domain_name = 'Oral Care' THEN CASE GREATEST(CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END, CASE s.dcs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 WHEN 'N/A' THEN 0 ELSE 1 END) WHEN 3 THEN 'RED' WHEN 2 THEN 'AMBER' ELSE 'GREEN' END END) AS oral_care_risk,
+            MAX(CASE WHEN d.domain_name = 'Dressing/Clothing' THEN CASE GREATEST(CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END, CASE s.dcs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 WHEN 'N/A' THEN 0 ELSE 1 END) WHEN 3 THEN 'RED' WHEN 2 THEN 'AMBER' ELSE 'GREEN' END END) AS dressing_risk,
+            MAX(CASE WHEN d.domain_name = 'Toileting' THEN CASE GREATEST(CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END, CASE s.dcs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 WHEN 'N/A' THEN 0 ELSE 1 END) WHEN 3 THEN 'RED' WHEN 2 THEN 'AMBER' ELSE 'GREEN' END END) AS toileting_risk,
+            MAX(CASE WHEN d.domain_name = 'Grooming' THEN CASE GREATEST(CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END, CASE s.dcs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 WHEN 'N/A' THEN 0 ELSE 1 END) WHEN 3 THEN 'RED' WHEN 2 THEN 'AMBER' ELSE 'GREEN' END END) AS grooming_risk,
             -- Alert summary: concatenate non-GREEN findings
             STRING_AGG(
                 CASE 
-                    WHEN s.crs_level IN ('RED', 'AMBER') THEN
+                    WHEN GREATEST(
+                        CASE s.crs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 ELSE 1 END,
+                        CASE s.dcs_level WHEN 'RED' THEN 3 WHEN 'AMBER' THEN 2 WHEN 'N/A' THEN 0 ELSE 1 END
+                    ) >= 2 THEN
                         d.domain_name || ': ' || 
                         CASE 
                             WHEN s.refusal_count > 0 THEN s.refusal_count::TEXT || ' refusals'
                             WHEN s.max_gap_hours IS NOT NULL THEN s.max_gap_hours::TEXT || 'h gap'
+                            WHEN s.dcs_level IN ('RED', 'AMBER') THEN 'documentation ' || ROUND(s.dcs_percentage)::TEXT || '%%'
                             ELSE 'requires attention'
                         END
                     ELSE NULL

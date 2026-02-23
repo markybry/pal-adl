@@ -354,6 +354,17 @@ class TestHelperFunctions(unittest.TestCase):
         self.assertTrue(is_refusal("didn't want to get dressed", ""))
         self.assertFalse(is_refusal("Assisted with washing", ""))
 
+    def test_is_refusal_away_exclusion(self):
+        from src.scoring_engine import is_refusal
+
+        self.assertFalse(is_refusal("'Evening Wash' was skipped for Samuel Barlow. Away", "Skipped: Evening Wash"))
+
+    def test_parse_assistance_level_away_exclusion(self):
+        from src.scoring_engine import parse_assistance_level
+
+        level = parse_assistance_level("'Evening Wash' was skipped for Samuel Barlow. Away", "Skipped: Evening Wash")
+        self.assertEqual(level, AssistanceLevel.NOT_SPECIFIED)
+
 
 class TestThresholdConstants(unittest.TestCase):
     """Verify threshold constants are as documented"""

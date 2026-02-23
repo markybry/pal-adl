@@ -83,6 +83,7 @@ def initialize_navigation_state():
     st.session_state.setdefault("selected_resident_name", None)
     st.session_state.setdefault("selected_domain_id", None)
     st.session_state.setdefault("selected_domain_name", None)
+    st.session_state.setdefault("import_refresh_message", None)
 
 
 def open_layer2(client_id: int, client_name: str, domain_name: str | None = None):
@@ -185,16 +186,19 @@ def color_row(series: pd.Series):
 def get_scored_clients(conn, start_date_id: int, end_date_id: int) -> pd.DataFrame:
     return pd.read_sql(
         """
-        SELECT DISTINCT
+        SELECT
             c.client_id,
-            c.client_name
-        FROM fact_resident_domain_score s
-        JOIN dim_resident r ON s.resident_id = r.resident_id
-        JOIN dim_client c ON r.client_id = c.client_id
-        WHERE s.start_date_id = %(start_date_id)s
-          AND s.end_date_id = %(end_date_id)s
-          AND r.is_active = TRUE
-          AND c.is_active = TRUE
+            c.client_name,
+            COUNT(DISTINCT r.resident_id) FILTER (WHERE r.is_active = TRUE) AS active_resident_count,
+            COUNT(DISTINCT s.resident_id) AS scored_resident_count
+        FROM dim_client c
+        LEFT JOIN dim_resident r ON r.client_id = c.client_id
+        LEFT JOIN fact_resident_domain_score s
+               ON s.resident_id = r.resident_id
+              AND s.start_date_id = %(start_date_id)s
+              AND s.end_date_id = %(end_date_id)s
+        WHERE c.is_active = TRUE
+        GROUP BY c.client_id, c.client_name
         ORDER BY c.client_name
         """,
         conn,
@@ -436,7 +440,10 @@ def render_admin_panel(conn, selected_end_date: date):
         recalc_summary = ", ".join(
             [f"{entry['period_days']}d: {entry['written']} written" for entry in recalc_results]
         )
-        st.info(f"Scores recalculated for {client_name.strip()} on {selected_end_date}: {recalc_summary}")
+        st.session_state["import_refresh_message"] = (
+            f"Import + recalc complete for {client_name.strip()} on {selected_end_date}. {recalc_summary}"
+        )
+        st.rerun()
 
 
 def render_layer1(conn, start_date_id: int, end_date_id: int):
@@ -481,10 +488,7 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
     clients_df = get_scored_clients(conn, start_date_id, end_date_id)
 
     if clients_df.empty:
-        st.warning(
-            "No clients have scores for this period. "
-            "Run scripts/calculate_scores.py for this end date and period first."
-        )
+        st.warning("No active clients found.")
         return
 
     client_options = clients_df.set_index("client_name")["client_id"].to_dict()
@@ -500,6 +504,22 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
 
     st.session_state["selected_client_id"] = selected_client_id
     st.session_state["selected_client_name"] = selected_client_name
+
+    selected_client_row = clients_df.loc[clients_df["client_id"] == selected_client_id].iloc[0]
+    active_residents = int(selected_client_row["active_resident_count"] or 0)
+    scored_residents = int(selected_client_row["scored_resident_count"] or 0)
+
+    if active_residents == 0:
+        st.info("This client has no active residents.")
+    elif scored_residents == 0:
+        st.warning(
+            "This client has no score data for the selected period yet. "
+            "Run score calculation for this period to populate Layer 2."
+        )
+    elif scored_residents < active_residents:
+        st.warning(
+            f"Incomplete dataset for this period: {scored_residents}/{active_residents} active residents have scores."
+        )
 
     risk_scope = st.sidebar.selectbox(
         "Risk filter",
@@ -651,10 +671,7 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
 def render_layer3(conn, start_date_id: int, end_date_id: int):
     clients_df = get_scored_clients(conn, start_date_id, end_date_id)
     if clients_df.empty:
-        st.warning(
-            "No clients have scores for this period. "
-            "Run scripts/calculate_scores.py for this end date and period first."
-        )
+        st.warning("No active clients found.")
         return
 
     client_options = clients_df.set_index("client_name")["client_id"].to_dict()
@@ -669,6 +686,17 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
     selected_client_id = int(client_options[selected_client_name])
     st.session_state["selected_client_id"] = selected_client_id
     st.session_state["selected_client_name"] = selected_client_name
+
+    selected_client_row = clients_df.loc[clients_df["client_id"] == selected_client_id].iloc[0]
+    active_residents = int(selected_client_row["active_resident_count"] or 0)
+    scored_residents = int(selected_client_row["scored_resident_count"] or 0)
+
+    if active_residents > 0 and scored_residents == 0:
+        st.warning("This client has no score data for the selected period.")
+    elif active_residents > 0 and scored_residents < active_residents:
+        st.info(
+            f"Partial dataset for this period: {scored_residents}/{active_residents} active residents have scores."
+        )
 
     residents_df = pd.read_sql(
         """
@@ -987,6 +1015,10 @@ def main():
 
     st.title("🏥 Care Analytics Dashboard")
     initialize_navigation_state()
+
+    refresh_message = st.session_state.pop("import_refresh_message", None)
+    if refresh_message:
+        st.success(refresh_message)
 
     try:
         conn = get_db_connection()
