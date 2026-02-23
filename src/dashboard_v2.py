@@ -1,6 +1,7 @@
 import hashlib
 import os
 import sys
+import zipfile
 from datetime import date, datetime, time
 from pathlib import Path
 
@@ -16,6 +17,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.dashboard_queries import DashboardQueries, DateHelper
+from scripts.calculate_scores import calculate_period_scores
+from scripts.import_csv_to_db import EXPECTED_COLUMNS, import_events
 
 def load_environment():
     env_file = os.getenv("ENV_FILE")
@@ -37,6 +40,7 @@ LAYER_1 = "Layer 1 - Executive Grid"
 LAYER_2 = "Layer 2 - Client View"
 LAYER_3 = "Layer 3 - Resident Deep Dive"
 LAYER_OPTIONS = [LAYER_1, LAYER_2, LAYER_3]
+DEFAULT_CLIENT_NAME = "Primary Access Ltd"
 
 
 def config_value(key: str, default: str) -> str:
@@ -228,6 +232,211 @@ def get_latest_scored_end_date(conn) -> date | None:
         return None
 
     return DateHelper.date_id_to_date(int(max_end_date_id))
+
+
+def render_db_connection_error(connection_context: dict[str, str], exc: Exception):
+    host = connection_context["db_host"]
+    port = connection_context["db_port"]
+    db_name = connection_context["db_name"]
+    error_text = str(exc)
+    error_text_lower = error_text.lower()
+    is_local_host = host in {"localhost", "127.0.0.1", "::1"}
+
+    st.error("Unable to connect to PostgreSQL.")
+
+    if is_local_host and (
+        "connection refused" in error_text_lower
+        or "could not connect to server" in error_text_lower
+        or "target machine actively refused" in error_text_lower
+    ):
+        st.warning("PostgreSQL service may not be running on this machine.")
+
+    st.markdown(
+        "\n".join(
+            [
+                "Check the database connection settings:",
+                f"- Host: {host}",
+                f"- Port: {port}",
+                f"- Database: {db_name}",
+                f"- Env file: {connection_context['env_file']}",
+            ]
+        )
+    )
+    st.info(
+        "If you are running locally on Windows, open Services and start your PostgreSQL service, "
+        "then refresh the dashboard."
+    )
+    st.caption(f"Connection error details: {error_text}")
+
+
+def has_import_dedupe_index(conn) -> bool:
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND indexname = 'uq_fact_adl_event_dedupe'
+            LIMIT 1
+            """
+        )
+        return cursor.fetchone() is not None
+    finally:
+        cursor.close()
+
+
+def parse_and_validate_dataframe(dataframe: pd.DataFrame, date_format: str, source_name: str) -> pd.DataFrame:
+    dataframe.columns = [str(col).strip() for col in dataframe.columns]
+
+    missing = set(EXPECTED_COLUMNS) - set(dataframe.columns)
+    if missing:
+        missing_cols = ", ".join(sorted(missing))
+        raise ValueError(f"Missing required columns in '{source_name}': {missing_cols}")
+
+    try:
+        dataframe["Time logged"] = pd.to_datetime(dataframe["Time logged"], format=date_format)
+    except Exception as exc:
+        raise ValueError(
+            f"Could not parse 'Time logged' in '{source_name}' with format '{date_format}': {exc}"
+        ) from exc
+
+    return dataframe
+
+
+def parse_uploaded_csv(uploaded_file, date_format: str) -> tuple[pd.DataFrame, int]:
+    filename = (uploaded_file.name or "").lower()
+
+    if filename.endswith(".zip"):
+        uploaded_file.seek(0)
+        try:
+            with zipfile.ZipFile(uploaded_file) as zip_handle:
+                csv_members = [
+                    member
+                    for member in zip_handle.namelist()
+                    if member.lower().endswith(".csv") and not member.endswith("/")
+                ]
+
+                if not csv_members:
+                    raise ValueError("ZIP file does not contain any CSV files.")
+
+                dataframes = []
+                for member in csv_members:
+                    with zip_handle.open(member) as csv_file:
+                        dataframe = pd.read_csv(csv_file)
+                        dataframes.append(parse_and_validate_dataframe(dataframe, date_format, member))
+
+        except zipfile.BadZipFile as exc:
+            raise ValueError("Uploaded ZIP file is invalid or corrupted.") from exc
+
+        combined = pd.concat(dataframes, ignore_index=True)
+        return combined, len(csv_members)
+
+    uploaded_file.seek(0)
+    dataframe = pd.read_csv(uploaded_file)
+    validated = parse_and_validate_dataframe(dataframe, date_format, uploaded_file.name or "uploaded CSV")
+    return validated, 1
+
+
+def render_admin_panel(conn, selected_end_date: date):
+    st.sidebar.markdown("---")
+    with st.sidebar.expander("Admin tools", expanded=False):
+        if st.button("🚪 Logout", key="admin_logout_button", use_container_width=True):
+            st.session_state["password_correct"] = False
+            st.rerun()
+
+        st.markdown("---")
+        st.caption("Import Care Logs")
+        uploaded_file = st.file_uploader(
+            "CSV or ZIP file",
+            type=["csv", "zip"],
+            key="dashboard_csv_upload",
+        )
+        client_name = st.text_input(
+            "Client name",
+            value=st.session_state.get("selected_client_name") or DEFAULT_CLIENT_NAME,
+            key="dashboard_import_client_name",
+        )
+        date_format = st.text_input(
+            "Date format",
+            value="%d/%m/%Y %H:%M:%S",
+            key="dashboard_import_date_format",
+        )
+
+        import_clicked = st.button("Import file", key="dashboard_import_button", use_container_width=True)
+
+        if not import_clicked:
+            return
+
+        if uploaded_file is None:
+            st.warning("Select a CSV file before importing.")
+            return
+
+        if not client_name.strip():
+            st.warning("Enter a client name before importing.")
+            return
+
+        if not has_import_dedupe_index(conn):
+            st.error(
+                "Missing database migration: run database/migrations/002_add_event_dedupe_index.sql before importing."
+            )
+            return
+
+        try:
+            dataframe, file_count = parse_uploaded_csv(uploaded_file, date_format)
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+        except Exception as exc:
+            st.error(f"Failed to read CSV: {exc}")
+            return
+
+        if file_count > 1:
+            st.caption(f"Loaded {file_count} CSV files from ZIP archive.")
+
+        try:
+            with st.spinner("Importing events..."):
+                imported, skipped, duplicates, errors = import_events(
+                    dataframe,
+                    conn,
+                    client_name.strip(),
+                )
+        except Exception as exc:
+            conn.rollback()
+            st.error(f"Import failed: {exc}")
+            return
+
+        recalc_periods = [7, 14, 30]
+        recalc_results = []
+        try:
+            with st.spinner("Recalculating dashboard scores..."):
+                for period_days in recalc_periods:
+                    result = calculate_period_scores(
+                        conn,
+                        end_date=selected_end_date,
+                        period_days=period_days,
+                        client_name=client_name.strip(),
+                    )
+                    recalc_results.append(result)
+        except Exception as exc:
+            conn.rollback()
+            st.error(f"Import completed, but score recalculation failed: {exc}")
+            st.info(
+                "Run scripts/calculate_scores.py manually to refresh dashboard scores. "
+                "Imported events are still saved."
+            )
+            return
+
+        st.success("Import completed.")
+        metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+        metric_col1.metric("Imported", imported)
+        metric_col2.metric("Skipped", skipped)
+        metric_col3.metric("Duplicates", duplicates)
+        metric_col4.metric("Errors", errors)
+        recalc_summary = ", ".join(
+            [f"{entry['period_days']}d: {entry['written']} written" for entry in recalc_results]
+        )
+        st.info(f"Scores recalculated for {client_name.strip()} on {selected_end_date}: {recalc_summary}")
 
 
 def render_layer1(conn, start_date_id: int, end_date_id: int):
@@ -779,11 +988,12 @@ def main():
     st.title("🏥 Care Analytics Dashboard")
     initialize_navigation_state()
 
-    if st.sidebar.button("🚪 Logout"):
-        st.session_state["password_correct"] = False
-        st.rerun()
+    try:
+        conn = get_db_connection()
+    except psycopg2.OperationalError as exc:
+        render_db_connection_error(get_connection_context(), exc)
+        st.stop()
 
-    conn = get_db_connection()
     default_end_date = get_latest_scored_end_date(conn) or date.today()
 
     st.sidebar.header("Analysis Period")
@@ -830,6 +1040,8 @@ def main():
         render_layer2(conn, start_date_id, end_date_id)
     else:
         render_layer3(conn, start_date_id, end_date_id)
+
+    render_admin_panel(conn, end_date)
 
     connection_context = get_connection_context()
     st.sidebar.markdown(

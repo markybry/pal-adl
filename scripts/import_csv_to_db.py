@@ -473,7 +473,7 @@ def main():
         description='Import care log CSV into PostgreSQL database'
     )
     parser.add_argument('csv_file', help='Path to CSV file')
-    parser.add_argument('--client', default='Default Care Home', 
+    parser.add_argument('--client', default='Primary Access Ltd', 
                        help='Client/organization name')
     parser.add_argument('--limit', type=int, 
                        help='Limit number of rows to import (for testing)')

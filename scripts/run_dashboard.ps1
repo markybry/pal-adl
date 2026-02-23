@@ -51,11 +51,37 @@ try {
     $envFileName = if ($Mode -eq "staging") { ".env.staging" } else { ".env" }
     $envFilePath = Join-Path $RepoRoot $envFileName
     $dbHost = Get-EnvValueFromFile -Path $envFilePath -Key "DB_HOST"
+    $dbPortRaw = Get-EnvValueFromFile -Path $envFilePath -Key "DB_PORT"
+    $dbPort = 5432
+    $parsedPort = 0
+
+    if (-not [string]::IsNullOrWhiteSpace($dbPortRaw) -and [int]::TryParse($dbPortRaw, [ref]$parsedPort)) {
+        $dbPort = $parsedPort
+    }
 
     $isLocalDb = [string]::IsNullOrWhiteSpace($dbHost) -or $dbHost -in @("localhost", "127.0.0.1", "::1")
 
+    if ($isLocalDb) {
+        $probeHost = if ([string]::IsNullOrWhiteSpace($dbHost)) { "localhost" } else { $dbHost }
+        $dbReachable = $false
+
+        try {
+            $dbReachable = Test-NetConnection -ComputerName $probeHost -Port $dbPort -InformationLevel Quiet -WarningAction SilentlyContinue
+        }
+        catch {
+            $dbReachable = $false
+        }
+
+        if (-not $dbReachable) {
+            Write-Warning "PostgreSQL may not be running or reachable at $probeHost`:$dbPort"
+            Write-Warning "Dashboard startup is stopping because local PostgreSQL is required."
+            Write-Warning "Start PostgreSQL, then run this script again."
+            throw "PostgreSQL preflight failed for $probeHost`:$dbPort"
+        }
+    }
+
     if ($isLocalDb -and $ManagePostgres) {
-        $postgresServices = Get-Service -Name "postgresql-x64-18*" -ErrorAction SilentlyContinue
+        $postgresServices = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue
 
         if ($postgresServices) {
             foreach ($service in $postgresServices) {
@@ -69,7 +95,7 @@ try {
             }
         }
         else {
-            Write-Warning "No Windows service matching 'postgresql-x64-18*' was found. Continuing startup..."
+            Write-Warning "No Windows service matching 'postgresql*' was found. Continuing startup..."
         }
     }
 
