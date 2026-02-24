@@ -162,25 +162,49 @@ def safe_rollback(conn):
         pass
 
 
+def read_sql_resilient(query: str, conn, params: dict | None = None) -> pd.DataFrame:
+    active_conn = conn
+    last_error = None
+
+    for attempt in range(2):
+        try:
+            return pd.read_sql(query, active_conn, params=params)
+        except (pd.errors.DatabaseError, psycopg2.Error) as exc:
+            last_error = exc
+            safe_rollback(active_conn)
+
+            if attempt == 0:
+                active_conn = get_active_connection()
+                continue
+
+            raise
+
+    if last_error:
+        raise last_error
+
+    return pd.DataFrame()
+
+
 def get_active_connection():
-    try:
-        conn = get_db_connection()
-        if conn is None or getattr(conn, "closed", 1) != 0:
-            raise psycopg2.InterfaceError("Cached connection is closed")
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT 1")
-        return conn
-    except psycopg2.errors.InFailedSqlTransaction:
-        safe_rollback(conn)
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT 1")
-        return conn
-    except (psycopg2.InterfaceError, psycopg2.OperationalError, psycopg2.Error):
-        get_db_connection.clear()
-        conn = get_db_connection()
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT 1")
-        return conn
+    for attempt in range(2):
+        try:
+            conn = get_db_connection()
+            if conn is None or getattr(conn, "closed", 1) != 0:
+                raise psycopg2.InterfaceError("Cached connection is closed")
+
+            safe_rollback(conn)
+
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+
+            return conn
+        except (psycopg2.InterfaceError, psycopg2.OperationalError, psycopg2.Error):
+            safe_rollback(locals().get("conn"))
+            get_db_connection.clear()
+            if attempt == 1:
+                raise
+
+    raise psycopg2.InterfaceError("Unable to establish an active database connection")
 
 
 def risk_badge(risk: str) -> str:
@@ -216,7 +240,7 @@ def get_scored_clients(conn, start_date_id: int, end_date_id: int) -> pd.DataFra
     end_ts = datetime.combine(DateHelper.date_id_to_date(end_date_id), time.max)
 
     try:
-        return pd.read_sql(
+        return read_sql_resilient(
             """
             SELECT
                 c.client_id,
@@ -249,7 +273,7 @@ def get_scored_clients(conn, start_date_id: int, end_date_id: int) -> pd.DataFra
         )
     except (pd.errors.DatabaseError, psycopg2.Error):
         safe_rollback(conn)
-        return pd.read_sql(
+        return read_sql_resilient(
             """
             SELECT
                 c.client_id,
@@ -289,7 +313,7 @@ def overall_risk(crs_level: str, dcs_level: str) -> str:
 
 def get_latest_scored_end_date(conn) -> date | None:
     try:
-        latest_df = pd.read_sql(
+        latest_df = read_sql_resilient(
             """
             SELECT MAX(end_date_id) AS max_end_date_id
             FROM fact_resident_domain_score
@@ -530,7 +554,7 @@ def render_admin_panel(conn, selected_end_date: date):
 
 def render_layer1(conn, start_date_id: int, end_date_id: int):
     query = DashboardQueries.layer1_executive_grid(start_date_id, end_date_id)
-    df = pd.read_sql(
+    df = read_sql_resilient(
         query,
         conn,
         params={"start_date_id": start_date_id, "end_date_id": end_date_id},
@@ -629,7 +653,7 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
         risk_filter=risk_filter,
     )
 
-    resident_df = pd.read_sql(
+    resident_df = read_sql_resilient(
         resident_query,
         conn,
         params={
@@ -647,7 +671,7 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
                 end_date_id,
                 risk_filter=None,
             )
-            unfiltered_df = pd.read_sql(
+            unfiltered_df = read_sql_resilient(
                 unfiltered_query,
                 conn,
                 params={
@@ -701,7 +725,7 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
 
     st.markdown("### 30-Day Risk Trend")
     trend_query = DashboardQueries.layer2_trend_data(selected_client_id, days=30)
-    trend_df = pd.read_sql(
+    trend_df = read_sql_resilient(
         trend_query,
         conn,
         params={"client_id": selected_client_id, "days": 30},
@@ -788,7 +812,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
             f"Partial scoring coverage for this period: {scored_residents}/{period_residents} residents with activity have scores."
         )
 
-    residents_df = pd.read_sql(
+    residents_df = read_sql_resilient(
         """
         SELECT DISTINCT
             r.resident_id,
@@ -826,7 +850,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
     st.session_state["selected_resident_id"] = selected_resident_id
     st.session_state["selected_resident_name"] = selected_resident_name
 
-    domains_df = pd.read_sql(DashboardQueries.get_domains(), conn)
+    domains_df = read_sql_resilient(DashboardQueries.get_domains(), conn)
     domain_options = domains_df.set_index("domain_name")["domain_id"].to_dict()
     domain_names = list(domain_options.keys())
     preferred_domain_name = st.session_state.get("selected_domain_name")
@@ -888,7 +912,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
         end_date_id,
         risk_filter=None,
     )
-    overview_df = pd.read_sql(
+    overview_df = read_sql_resilient(
         overview_query,
         conn,
         params={
@@ -947,7 +971,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
         start_date_id,
         end_date_id,
     )
-    score_df = pd.read_sql(
+    score_df = read_sql_resilient(
         score_query,
         conn,
         params={
@@ -1043,7 +1067,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
         "This chart does not use event-level filtering."
     )
 
-    trend_df = pd.read_sql(
+    trend_df = read_sql_resilient(
         """
         SELECT
             dd.full_date,
@@ -1177,7 +1201,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
         start_ts,
         end_ts,
     )
-    timeline_df = pd.read_sql(
+    timeline_df = read_sql_resilient(
         timeline_query,
         conn,
         params={
@@ -1215,7 +1239,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
         start_ts,
         end_ts,
     )
-    assist_df = pd.read_sql(
+    assist_df = read_sql_resilient(
         assist_query,
         conn,
         params={
@@ -1331,12 +1355,18 @@ def main():
         f"Analysis period: {DateHelper.date_id_to_date(start_date_id)} to {DateHelper.date_id_to_date(end_date_id)}"
     )
 
-    if layer == LAYER_1:
-        render_layer1(conn, start_date_id, end_date_id)
-    elif layer == LAYER_2:
-        render_layer2(conn, start_date_id, end_date_id)
-    else:
-        render_layer3(conn, start_date_id, end_date_id)
+    try:
+        if layer == LAYER_1:
+            render_layer1(conn, start_date_id, end_date_id)
+        elif layer == LAYER_2:
+            render_layer2(conn, start_date_id, end_date_id)
+        else:
+            render_layer3(conn, start_date_id, end_date_id)
+    except (pd.errors.DatabaseError, psycopg2.Error) as exc:
+        safe_rollback(conn)
+        st.error("A database query failed during dashboard rendering.")
+        st.caption(str(exc))
+        st.stop()
 
     render_admin_panel(conn, end_date)
 
