@@ -75,7 +75,6 @@ def get_default_index(options, preferred_value):
 
 def initialize_navigation_state():
     st.session_state.setdefault("active_layer", LAYER_1)
-    st.session_state.setdefault("active_layer_selector", LAYER_1)
     st.session_state.setdefault("pending_layer", None)
     st.session_state.setdefault("selected_client_id", None)
     st.session_state.setdefault("selected_client_name", None)
@@ -155,6 +154,30 @@ def get_db_connection():
         raise
 
 
+def safe_rollback(conn):
+    try:
+        if conn is not None and getattr(conn, "closed", 1) == 0:
+            conn.rollback()
+    except psycopg2.Error:
+        pass
+
+
+def get_active_connection():
+    try:
+        conn = get_db_connection()
+        if conn is None or getattr(conn, "closed", 1) != 0:
+            raise psycopg2.InterfaceError("Cached connection is closed")
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        return conn
+    except (psycopg2.InterfaceError, psycopg2.OperationalError):
+        get_db_connection.clear()
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        return conn
+
+
 def risk_badge(risk: str) -> str:
     if risk == "RED":
         return "🔴 RED"
@@ -189,10 +212,15 @@ def get_scored_clients(conn, start_date_id: int, end_date_id: int) -> pd.DataFra
         SELECT
             c.client_id,
             c.client_name,
-            COUNT(DISTINCT r.resident_id) FILTER (WHERE r.is_active = TRUE) AS active_resident_count,
+            COUNT(DISTINCT r.resident_id) AS active_resident_count,
+            COUNT(DISTINCT e.resident_id) AS period_resident_count,
             COUNT(DISTINCT s.resident_id) AS scored_resident_count
         FROM dim_client c
         LEFT JOIN dim_resident r ON r.client_id = c.client_id
+                                AND r.is_active = TRUE
+        LEFT JOIN fact_adl_event e
+               ON e.resident_id = r.resident_id
+              AND e.date_id BETWEEN %(start_date_id)s AND %(end_date_id)s
         LEFT JOIN fact_resident_domain_score s
                ON s.resident_id = r.resident_id
               AND s.start_date_id = %(start_date_id)s
@@ -221,13 +249,18 @@ def overall_risk(crs_level: str, dcs_level: str) -> str:
 
 
 def get_latest_scored_end_date(conn) -> date | None:
-    latest_df = pd.read_sql(
-        """
-        SELECT MAX(end_date_id) AS max_end_date_id
-        FROM fact_resident_domain_score
-        """,
-        conn,
-    )
+    try:
+        latest_df = pd.read_sql(
+            """
+            SELECT MAX(end_date_id) AS max_end_date_id
+            FROM fact_resident_domain_score
+            """,
+            conn,
+        )
+    except (pd.errors.DatabaseError, psycopg2.Error):
+        safe_rollback(conn)
+        return None
+
     if latest_df.empty:
         return None
 
@@ -345,6 +378,16 @@ def parse_uploaded_csv(uploaded_file, date_format: str) -> tuple[pd.DataFrame, i
 def render_admin_panel(conn, selected_end_date: date):
     st.sidebar.markdown("---")
     with st.sidebar.expander("Admin tools", expanded=False):
+        if st.button("🔄 Retry DB connection", key="admin_retry_db_button", use_container_width=True):
+            get_db_connection.clear()
+            try:
+                get_active_connection()
+            except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+                st.error(f"DB reconnect failed: {exc}")
+            else:
+                st.success("DB connection refreshed.")
+                st.rerun()
+
         if st.button("🚪 Logout", key="admin_logout_button", use_container_width=True):
             st.session_state["password_correct"] = False
             st.rerun()
@@ -406,7 +449,7 @@ def render_admin_panel(conn, selected_end_date: date):
                     client_name.strip(),
                 )
         except Exception as exc:
-            conn.rollback()
+            safe_rollback(conn)
             st.error(f"Import failed: {exc}")
             return
 
@@ -423,7 +466,7 @@ def render_admin_panel(conn, selected_end_date: date):
                     )
                     recalc_results.append(result)
         except Exception as exc:
-            conn.rollback()
+            safe_rollback(conn)
             st.error(f"Import completed, but score recalculation failed: {exc}")
             st.info(
                 "Run scripts/calculate_scores.py manually to refresh dashboard scores. "
@@ -507,18 +550,21 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
 
     selected_client_row = clients_df.loc[clients_df["client_id"] == selected_client_id].iloc[0]
     active_residents = int(selected_client_row["active_resident_count"] or 0)
+    period_residents = int(selected_client_row["period_resident_count"] or 0)
     scored_residents = int(selected_client_row["scored_resident_count"] or 0)
 
     if active_residents == 0:
         st.info("This client has no active residents.")
+    elif period_residents == 0:
+        st.info("No resident activity found for this client in the selected period.")
     elif scored_residents == 0:
         st.warning(
             "This client has no score data for the selected period yet. "
             "Run score calculation for this period to populate Layer 2."
         )
-    elif scored_residents < active_residents:
+    elif scored_residents < period_residents:
         st.warning(
-            f"Incomplete dataset for this period: {scored_residents}/{active_residents} active residents have scores."
+            f"Partial scoring coverage for this period: {scored_residents}/{period_residents} residents with activity have scores."
         )
 
     risk_scope = st.sidebar.selectbox(
@@ -689,13 +735,18 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
 
     selected_client_row = clients_df.loc[clients_df["client_id"] == selected_client_id].iloc[0]
     active_residents = int(selected_client_row["active_resident_count"] or 0)
+    period_residents = int(selected_client_row["period_resident_count"] or 0)
     scored_residents = int(selected_client_row["scored_resident_count"] or 0)
 
-    if active_residents > 0 and scored_residents == 0:
+    if active_residents == 0:
+        st.info("This client has no active residents.")
+    elif period_residents == 0:
+        st.info("No resident activity found for this client in the selected period.")
+    elif scored_residents == 0:
         st.warning("This client has no score data for the selected period.")
-    elif active_residents > 0 and scored_residents < active_residents:
+    elif scored_residents < period_residents:
         st.info(
-            f"Partial dataset for this period: {scored_residents}/{active_residents} active residents have scores."
+            f"Partial scoring coverage for this period: {scored_residents}/{period_residents} residents with activity have scores."
         )
 
     residents_df = pd.read_sql(
@@ -750,9 +801,106 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
     st.session_state["selected_domain_id"] = selected_domain_id
     st.session_state["selected_domain_name"] = selected_domain_name
 
+    current_resident_index = resident_names.index(selected_resident_name)
+    previous_resident_name = (
+        resident_names[current_resident_index - 1] if current_resident_index > 0 else None
+    )
+    next_resident_name = (
+        resident_names[current_resident_index + 1]
+        if current_resident_index < len(resident_names) - 1
+        else None
+    )
+
+    nav_back_col, nav_prev_col, nav_next_col = st.columns([2, 1, 1])
+    with nav_back_col:
+        if st.button("⬅ Back to Client View", key="layer3_back_to_layer2"):
+            st.session_state["active_layer"] = LAYER_2
+            st.session_state["pending_layer"] = LAYER_2
+            st.rerun()
+    with nav_prev_col:
+        if st.button(
+            "◀ Previous",
+            key="layer3_prev_resident",
+            disabled=previous_resident_name is None,
+            use_container_width=True,
+        ):
+            previous_resident_id = int(resident_options[previous_resident_name])
+            open_layer3(previous_resident_id, previous_resident_name, selected_domain_name)
+    with nav_next_col:
+        if st.button(
+            "Next ▶",
+            key="layer3_next_resident",
+            disabled=next_resident_name is None,
+            use_container_width=True,
+        ):
+            next_resident_id = int(resident_options[next_resident_name])
+            open_layer3(next_resident_id, next_resident_name, selected_domain_name)
+
+    st.caption(f"Client View: {selected_client_name}")
+
     st.subheader(
         f"Resident Deep Dive: {selected_resident_name} · {selected_domain_name} ({selected_client_name})"
     )
+
+    st.markdown("### Client Overview")
+    overview_query = DashboardQueries.layer2_client_view(
+        selected_client_id,
+        start_date_id,
+        end_date_id,
+        risk_filter=None,
+    )
+    overview_df = pd.read_sql(
+        overview_query,
+        conn,
+        params={
+            "client_id": selected_client_id,
+            "start_date_id": start_date_id,
+            "end_date_id": end_date_id,
+        },
+    )
+
+    if overview_df.empty:
+        st.info("No resident overview data found for this client and period.")
+    else:
+        overview_counts = overview_df["overall_risk"].value_counts()
+        overview_col1, overview_col2, overview_col3 = st.columns(3)
+        overview_col1.metric("🔴 RED Residents", int(overview_counts.get("RED", 0)))
+        overview_col2.metric("🟡 AMBER Residents", int(overview_counts.get("AMBER", 0)))
+        overview_col3.metric("🟢 GREEN Residents", int(overview_counts.get("GREEN", 0)))
+
+        overview_display = overview_df[
+            [
+                "resident_name",
+                "overall_risk",
+                "washing_risk",
+                "oral_care_risk",
+                "dressing_risk",
+                "toileting_risk",
+                "grooming_risk",
+            ]
+        ].rename(
+            columns={
+                "resident_name": "Resident",
+                "overall_risk": "Overall",
+                "washing_risk": "Washing",
+                "oral_care_risk": "Oral Care",
+                "dressing_risk": "Dressing",
+                "toileting_risk": "Toileting",
+                "grooming_risk": "Grooming",
+            }
+        )
+        overview_display.insert(
+            0,
+            "Viewing",
+            overview_display["Resident"].map(lambda name: "👁" if name == selected_resident_name else ""),
+        )
+
+        for column in ["Overall", "Washing", "Oral Care", "Dressing", "Toileting", "Grooming"]:
+            overview_display[column] = overview_display[column].map(risk_badge)
+
+        st.dataframe(overview_display, use_container_width=True, height=320)
+
+    st.markdown("### Resident Detail")
 
     score_query = DashboardQueries.layer3_score_breakdown(
         selected_resident_id,
@@ -783,6 +931,52 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
     top1.metric("Overall", risk_badge(combined_risk))
     top2.metric("Care Risk (CRS)", f"{risk_badge(score['crs_level'])} · {int(score['crs_total'])} pts")
     top3.metric("Documentation (DCS)", f"{risk_badge(score['dcs_level'])} · {float(score['dcs_percentage']):.0f}%")
+
+    refusal_count_value = int(score["refusal_count"]) if pd.notna(score["refusal_count"]) else 0
+    max_gap_hours_value = float(score["max_gap_hours"]) if pd.notna(score["max_gap_hours"]) else None
+    amber_gap_threshold = int(score["gap_threshold_amber"])
+    red_gap_threshold = int(score["gap_threshold_red"])
+    dcs_pct_value = float(score["dcs_percentage"]) if pd.notna(score["dcs_percentage"]) else 0.0
+    actual_entries_value = int(score["actual_entries"]) if pd.notna(score["actual_entries"]) else 0
+    expected_entries_value = float(score["expected_entries"]) if pd.notna(score["expected_entries"]) else 0.0
+
+    if max_gap_hours_value is None:
+        gap_explanation = "Gap: insufficient event history in this period to compute a max gap."
+    elif max_gap_hours_value > red_gap_threshold:
+        gap_explanation = (
+            f"Gap: max recorded gap is {max_gap_hours_value:.1f}h, above RED threshold "
+            f"({red_gap_threshold}h), so gap contributes 3 points."
+        )
+    elif max_gap_hours_value > amber_gap_threshold:
+        gap_explanation = (
+            f"Gap: max recorded gap is {max_gap_hours_value:.1f}h, above AMBER threshold "
+            f"({amber_gap_threshold}h) and at/below RED ({red_gap_threshold}h), so gap contributes 2 points."
+        )
+    else:
+        gap_explanation = (
+            f"Gap: max recorded gap is {max_gap_hours_value:.1f}h, within threshold "
+            f"(≤{amber_gap_threshold}h), so gap contributes 0 points."
+        )
+
+    with st.expander("How this score is calculated", expanded=False):
+        st.markdown("**Care Risk Score (CRS)**")
+        st.write(
+            f"CRS total is the sum of Refusal + Gap + Dependency = "
+            f"{int(score['crs_refusal_score'])} + {int(score['crs_gap_score'])} + {int(score['crs_dependency_score'])} "
+            f"= {int(score['crs_total'])} points ({risk_badge(score['crs_level'])})."
+        )
+        st.write(f"Refusal: {refusal_count_value} refusal events in this window gives {int(score['crs_refusal_score'])} points.")
+        st.write(gap_explanation)
+        st.write(f"Dependency: trend component contributes {int(score['crs_dependency_score'])} points based on assistance-level change.")
+
+        st.markdown("**Documentation Compliance (DCS)**")
+        st.write(
+            f"DCS is recorded entries vs expected entries for this domain and period: "
+            f"{actual_entries_value} / {expected_entries_value:.1f} = {dcs_pct_value:.0f}% "
+            f"({risk_badge(score['dcs_level'])})."
+        )
+        st.write("DCS thresholds: GREEN ≥ 90%, AMBER 60–89%, RED < 60%.")
+        st.write("Overall shown on the page is the worse of CRS and DCS.")
 
     st.markdown("### Score Breakdown")
     detail1, detail2 = st.columns(2)
@@ -839,18 +1033,48 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
     )
 
     if trend_df.empty:
-        st.info("No recent trend snapshots available for this resident/domain.")
+        st.info(
+            "No recent trend snapshots available for this resident/domain. "
+            "Showing the current snapshot only."
+        )
+        trend_df = pd.DataFrame(
+            [
+                {
+                    "full_date": selected_end_date,
+                    "crs_total": score["crs_total"],
+                    "dcs_percentage": score["dcs_percentage"],
+                    "refusal_count": score["refusal_count"],
+                    "max_gap_hours": score["max_gap_hours"],
+                    "actual_entries": score["actual_entries"],
+                    "expected_entries": score["expected_entries"],
+                }
+            ]
+        )
+
+    trend_df = trend_df.sort_values("full_date")
+    trend_df["dcs_capped"] = trend_df["dcs_percentage"].clip(upper=100)
+    date_axis_format = "%d %b" if period_days <= 30 else "%b %Y"
+
+    if len(trend_df) > 1 and trend_df["crs_total"].nunique() <= 1 and trend_df["dcs_percentage"].nunique() <= 1:
+        st.info(
+            "Trend is flat for the selected lookback window: stored CRS and DCS values are unchanged "
+            "across these recent snapshots."
+        )
+
+    if len(trend_df) == 1:
+        st.info("Only one score snapshot is available, so mini bar charts are shown instead of trend lines.")
+        trend_col1, trend_col2 = st.columns(2)
+        with trend_col1:
+            st.bar_chart(trend_df, x="full_date", y="crs_total", x_label="Date", y_label="CRS Points")
+        with trend_col2:
+            st.bar_chart(trend_df, x="full_date", y="dcs_capped", x_label="Date", y_label="DCS % (capped at 100)")
+
+        drivers_col1, drivers_col2 = st.columns(2)
+        with drivers_col1:
+            st.bar_chart(trend_df, x="full_date", y="max_gap_hours", x_label="Date", y_label="Max Gap (hours)")
+        with drivers_col2:
+            st.bar_chart(trend_df, x="full_date", y="actual_entries", x_label="Date", y_label="Actual Entries")
     else:
-        trend_df = trend_df.sort_values("full_date")
-        trend_df["dcs_capped"] = trend_df["dcs_percentage"].clip(upper=100)
-        date_axis_format = "%d %b" if period_days <= 30 else "%b %Y"
-
-        if trend_df["crs_total"].nunique() <= 1 and trend_df["dcs_percentage"].nunique() <= 1:
-            st.info(
-                "Trend is flat for the selected lookback window: stored CRS and DCS values are unchanged "
-                "across these recent snapshots."
-            )
-
         trend_col1, trend_col2 = st.columns(2)
 
         with trend_col1:
@@ -1021,8 +1245,11 @@ def main():
         st.success(refresh_message)
 
     try:
-        conn = get_db_connection()
+        conn = get_active_connection()
     except psycopg2.OperationalError as exc:
+        render_db_connection_error(get_connection_context(), exc)
+        st.stop()
+    except psycopg2.InterfaceError as exc:
         render_db_connection_error(get_connection_context(), exc)
         st.stop()
 
@@ -1034,7 +1261,6 @@ def main():
     pending_layer = st.session_state.get("pending_layer")
     if pending_layer in LAYER_OPTIONS:
         st.session_state["active_layer"] = pending_layer
-        st.session_state["active_layer_selector"] = pending_layer
         st.session_state["pending_layer"] = None
 
     layer = st.sidebar.selectbox(
@@ -1043,7 +1269,7 @@ def main():
         index=get_default_index(LAYER_OPTIONS, st.session_state.get("active_layer", LAYER_1)),
         key="active_layer_selector",
     )
-    st.session_state["active_layer"] = st.session_state.get("active_layer_selector", layer)
+    st.session_state["active_layer"] = layer
 
     if layer == LAYER_3:
         period_days = st.sidebar.selectbox(
