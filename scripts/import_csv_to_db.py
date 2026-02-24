@@ -294,6 +294,28 @@ def verify_idempotency_index(cursor):
     sys.exit(1)
 
 
+def verify_import_permissions(cursor):
+    """Ensure current DB user can insert into fact_adl_event before import starts."""
+    cursor.execute("SELECT current_user")
+    current_user = cursor.fetchone()[0]
+
+    cursor.execute(
+        """
+        SELECT has_table_privilege(current_user, 'public.fact_adl_event', 'INSERT')
+        """
+    )
+    can_insert_event = bool(cursor.fetchone()[0])
+
+    if can_insert_event:
+        return
+
+    print("❌ Permission denied: current DB user cannot INSERT into public.fact_adl_event")
+    print(f"   Connected user: {current_user}")
+    print("\nGrant required privilege, then retry import:")
+    print(f"  GRANT INSERT, SELECT ON TABLE public.fact_adl_event TO {current_user};")
+    sys.exit(1)
+
+
 # =============================================================================
 # MAIN ETL LOGIC
 # =============================================================================
@@ -304,6 +326,7 @@ def import_events(df, conn, client_name, limit=None):
 
     # Safety check: enforce idempotent-ready schema
     verify_idempotency_index(cursor)
+    verify_import_permissions(cursor)
     
     # Get or create client
     print(f"\n📋 Setting up client: {client_name}")
@@ -350,10 +373,13 @@ def import_events(df, conn, client_name, limit=None):
     
     for idx, row in df.iterrows():
         try:
+            cursor.execute("SAVEPOINT row_import")
+
             # Get resident
             resident_id = resident_map.get(row['Resident'])
             if not resident_id:
                 skipped += 1
+                cursor.execute("RELEASE SAVEPOINT row_import")
                 continue
             
             # Map domain
@@ -362,6 +388,7 @@ def import_events(df, conn, client_name, limit=None):
             # Skip if item is null/NaN (silently)
             if pd.isna(item):
                 skipped += 1
+                cursor.execute("RELEASE SAVEPOINT row_import")
                 continue
             
             domain_name = DOMAIN_MAP.get(item)
@@ -371,11 +398,13 @@ def import_events(df, conn, client_name, limit=None):
                 if item not in skipped_domains:
                     skipped_domains[item] = 0
                 skipped_domains[item] += 1
+                cursor.execute("RELEASE SAVEPOINT row_import")
                 continue
             
             domain_id = db_domains.get(domain_name)
             if not domain_id:
                 skipped += 1
+                cursor.execute("RELEASE SAVEPOINT row_import")
                 continue
             
             # Get or create staff (if column exists)
@@ -426,7 +455,10 @@ def import_events(df, conn, client_name, limit=None):
                     imported_with_staff += 1
             else:
                 duplicates += 1
+                cursor.execute("RELEASE SAVEPOINT row_import")
                 continue
+
+            cursor.execute("RELEASE SAVEPOINT row_import")
             
             # Commit every 100 rows
             if imported % 100 == 0:
@@ -434,9 +466,17 @@ def import_events(df, conn, client_name, limit=None):
                 print(f"  ✓ Imported {imported} events...")
                 
         except Exception as e:
+            cursor.execute("ROLLBACK TO SAVEPOINT row_import")
+            cursor.execute("RELEASE SAVEPOINT row_import")
             errors += 1
             if errors <= 5:  # Only print first few errors
                 print(f"  ❌ Error on row {idx}: {e}")
+
+            if isinstance(e, psycopg2.Error) and e.pgcode == "42501":
+                print("\n❌ Import stopped: database user lacks permission to write required tables.")
+                print("   Fix DB grants and run import again.")
+                raise
+
             continue
     
     conn.commit()
