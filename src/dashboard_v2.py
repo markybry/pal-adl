@@ -170,7 +170,12 @@ def get_active_connection():
         with conn.cursor() as cursor:
             cursor.execute("SELECT 1")
         return conn
-    except (psycopg2.InterfaceError, psycopg2.OperationalError):
+    except psycopg2.errors.InFailedSqlTransaction:
+        safe_rollback(conn)
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        return conn
+    except (psycopg2.InterfaceError, psycopg2.OperationalError, psycopg2.Error):
         get_db_connection.clear()
         conn = get_db_connection()
         with conn.cursor() as cursor:
