@@ -207,31 +207,65 @@ def color_row(series: pd.Series):
 
 
 def get_scored_clients(conn, start_date_id: int, end_date_id: int) -> pd.DataFrame:
-    return pd.read_sql(
-        """
-        SELECT
-            c.client_id,
-            c.client_name,
-            COUNT(DISTINCT r.resident_id) AS active_resident_count,
-            COUNT(DISTINCT e.resident_id) AS period_resident_count,
-            COUNT(DISTINCT s.resident_id) AS scored_resident_count
-        FROM dim_client c
-        LEFT JOIN dim_resident r ON r.client_id = c.client_id
-                                AND r.is_active = TRUE
-        LEFT JOIN fact_adl_event e
-               ON e.resident_id = r.resident_id
-              AND e.date_id BETWEEN %(start_date_id)s AND %(end_date_id)s
-        LEFT JOIN fact_resident_domain_score s
-               ON s.resident_id = r.resident_id
-              AND s.start_date_id = %(start_date_id)s
-              AND s.end_date_id = %(end_date_id)s
-        WHERE c.is_active = TRUE
-        GROUP BY c.client_id, c.client_name
-        ORDER BY c.client_name
-        """,
-        conn,
-        params={"start_date_id": start_date_id, "end_date_id": end_date_id},
-    )
+    start_ts = datetime.combine(DateHelper.date_id_to_date(start_date_id), time.min)
+    end_ts = datetime.combine(DateHelper.date_id_to_date(end_date_id), time.max)
+
+    try:
+        return pd.read_sql(
+            """
+            SELECT
+                c.client_id,
+                c.client_name,
+                COUNT(DISTINCT r.resident_id) AS active_resident_count,
+                COUNT(DISTINCT e.resident_id) AS period_resident_count,
+                COUNT(DISTINCT s.resident_id) AS scored_resident_count
+            FROM dim_client c
+            LEFT JOIN dim_resident r ON r.client_id = c.client_id
+                                    AND r.is_active = TRUE
+            LEFT JOIN fact_adl_event e
+                   ON e.resident_id = r.resident_id
+                  AND e.event_timestamp >= %(start_ts)s
+                  AND e.event_timestamp <= %(end_ts)s
+            LEFT JOIN fact_resident_domain_score s
+                   ON s.resident_id = r.resident_id
+                  AND s.start_date_id = %(start_date_id)s
+                  AND s.end_date_id = %(end_date_id)s
+            WHERE c.is_active = TRUE
+            GROUP BY c.client_id, c.client_name
+            ORDER BY c.client_name
+            """,
+            conn,
+            params={
+                "start_date_id": start_date_id,
+                "end_date_id": end_date_id,
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+            },
+        )
+    except (pd.errors.DatabaseError, psycopg2.Error):
+        safe_rollback(conn)
+        return pd.read_sql(
+            """
+            SELECT
+                c.client_id,
+                c.client_name,
+                COUNT(DISTINCT r.resident_id) AS active_resident_count,
+                COUNT(DISTINCT s.resident_id) AS period_resident_count,
+                COUNT(DISTINCT s.resident_id) AS scored_resident_count
+            FROM dim_client c
+            LEFT JOIN dim_resident r ON r.client_id = c.client_id
+                                    AND r.is_active = TRUE
+            LEFT JOIN fact_resident_domain_score s
+                   ON s.resident_id = r.resident_id
+                  AND s.start_date_id = %(start_date_id)s
+                  AND s.end_date_id = %(end_date_id)s
+            WHERE c.is_active = TRUE
+            GROUP BY c.client_id, c.client_name
+            ORDER BY c.client_name
+            """,
+            conn,
+            params={"start_date_id": start_date_id, "end_date_id": end_date_id},
+        )
 
 
 def risk_rank(risk: str) -> int:
