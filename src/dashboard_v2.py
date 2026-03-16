@@ -83,6 +83,7 @@ def initialize_navigation_state():
     st.session_state.setdefault("selected_domain_id", None)
     st.session_state.setdefault("selected_domain_name", None)
     st.session_state.setdefault("import_refresh_message", None)
+    st.session_state.setdefault("pending_analysis_end_date", None)
 
 
 def open_layer2(client_id: int, client_name: str, domain_name: str | None = None):
@@ -154,6 +155,31 @@ def get_db_connection():
         raise
 
 
+def get_import_connection():
+    context = get_connection_context()
+    host = context["db_host"]
+    is_local_host = host in {"localhost", "127.0.0.1", "::1"}
+    sslmode = context["sslmode"]
+
+    connect_kwargs = {
+        "dbname": context["db_name"],
+        "user": config_value("DB_WRITE_USER", config_value("DB_USER", "postgres")),
+        "password": config_value("DB_WRITE_PASSWORD", config_value("DB_PASSWORD", "postgres")),
+        "host": host,
+        "port": int(context["db_port"]),
+        "sslmode": sslmode,
+    }
+
+    try:
+        return psycopg2.connect(**connect_kwargs)
+    except psycopg2.OperationalError as exc:
+        error_text = str(exc).lower()
+        if is_local_host and "server does not support ssl" in error_text and sslmode != "prefer":
+            connect_kwargs["sslmode"] = "prefer"
+            return psycopg2.connect(**connect_kwargs)
+        raise
+
+
 def safe_rollback(conn):
     try:
         if conn is not None and getattr(conn, "closed", 1) == 0:
@@ -162,13 +188,21 @@ def safe_rollback(conn):
         pass
 
 
+def query_to_dataframe(query: str, conn, params: dict | None = None) -> pd.DataFrame:
+    with conn.cursor() as cursor:
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        columns = [description[0] for description in cursor.description]
+    return pd.DataFrame(rows, columns=columns)
+
+
 def read_sql_resilient(query: str, conn, params: dict | None = None) -> pd.DataFrame:
     active_conn = conn
     last_error = None
 
     for attempt in range(2):
         try:
-            return pd.read_sql(query, active_conn, params=params)
+            return query_to_dataframe(query, active_conn, params=params)
         except (pd.errors.DatabaseError, psycopg2.Error) as exc:
             last_error = exc
             safe_rollback(active_conn)
@@ -440,8 +474,8 @@ def parse_uploaded_csv(uploaded_file, date_format: str) -> tuple[pd.DataFrame, i
 
 def render_admin_panel(conn, selected_end_date: date):
     st.sidebar.markdown("---")
-    with st.sidebar.expander("Admin tools", expanded=False):
-        if st.button("🔄 Retry DB connection", key="admin_retry_db_button", use_container_width=True):
+    with st.sidebar.expander("Admin tools", expanded=True):
+        if st.button("🔄 Retry DB connection", key="admin_retry_db_button", width="stretch"):
             get_db_connection.clear()
             try:
                 get_active_connection()
@@ -451,7 +485,7 @@ def render_admin_panel(conn, selected_end_date: date):
                 st.success("DB connection refreshed.")
                 st.rerun()
 
-        if st.button("🚪 Logout", key="admin_logout_button", use_container_width=True):
+        if st.button("🚪 Logout", key="admin_logout_button", width="stretch"):
             st.session_state["password_correct"] = False
             st.rerun()
 
@@ -473,10 +507,12 @@ def render_admin_panel(conn, selected_end_date: date):
             key="dashboard_import_date_format",
         )
 
-        import_clicked = st.button("Import file", key="dashboard_import_button", use_container_width=True)
+        import_clicked = st.button("Import file", key="dashboard_import_button", width="stretch")
 
         if not import_clicked:
             return
+
+        st.info("Import request received. Processing...")
 
         if uploaded_file is None:
             st.warning("Select a CSV file before importing.")
@@ -486,34 +522,56 @@ def render_admin_panel(conn, selected_end_date: date):
             st.warning("Enter a client name before importing.")
             return
 
-        if not has_import_dedupe_index(conn):
+        try:
+            import_conn = get_import_connection()
+        except psycopg2.OperationalError as exc:
+            st.error(f"Could not open write connection for import: {exc}")
+            st.info("Set DB_WRITE_USER and DB_WRITE_PASSWORD in your env file for import/recalc operations.")
+            return
+
+        if not has_import_dedupe_index(import_conn):
             st.error(
                 "Missing database migration: run database/migrations/002_add_event_dedupe_index.sql before importing."
             )
+            import_conn.close()
             return
 
         try:
             dataframe, file_count = parse_uploaded_csv(uploaded_file, date_format)
         except ValueError as exc:
             st.error(str(exc))
+            import_conn.close()
             return
         except Exception as exc:
             st.error(f"Failed to read CSV: {exc}")
+            import_conn.close()
             return
 
         if file_count > 1:
             st.caption(f"Loaded {file_count} CSV files from ZIP archive.")
 
+        recalc_end_date = selected_end_date
+        latest_event_ts = dataframe["Time logged"].max() if "Time logged" in dataframe.columns else None
+        if latest_event_ts is not None and pd.notna(latest_event_ts):
+            recalc_end_date = pd.Timestamp(latest_event_ts).date()
+
         try:
             with st.spinner("Importing events..."):
                 imported, skipped, duplicates, errors = import_events(
                     dataframe,
-                    conn,
+                    import_conn,
                     client_name.strip(),
                 )
+        except PermissionError as exc:
+            safe_rollback(import_conn)
+            st.error(str(exc))
+            st.info("Set DB_WRITE_USER and DB_WRITE_PASSWORD to a role with INSERT/UPDATE/DELETE privileges (for example care_app_rw).")
+            import_conn.close()
+            return
         except Exception as exc:
-            safe_rollback(conn)
+            safe_rollback(import_conn)
             st.error(f"Import failed: {exc}")
+            import_conn.close()
             return
 
         recalc_periods = [7, 14, 30]
@@ -522,20 +580,23 @@ def render_admin_panel(conn, selected_end_date: date):
             with st.spinner("Recalculating dashboard scores..."):
                 for period_days in recalc_periods:
                     result = calculate_period_scores(
-                        conn,
-                        end_date=selected_end_date,
+                        import_conn,
+                        end_date=recalc_end_date,
                         period_days=period_days,
                         client_name=client_name.strip(),
                     )
                     recalc_results.append(result)
         except Exception as exc:
-            safe_rollback(conn)
+            safe_rollback(import_conn)
             st.error(f"Import completed, but score recalculation failed: {exc}")
             st.info(
                 "Run scripts/calculate_scores.py manually to refresh dashboard scores. "
                 "Imported events are still saved."
             )
+            import_conn.close()
             return
+
+        import_conn.close()
 
         st.success("Import completed.")
         metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
@@ -547,8 +608,9 @@ def render_admin_panel(conn, selected_end_date: date):
             [f"{entry['period_days']}d: {entry['written']} written" for entry in recalc_results]
         )
         st.session_state["import_refresh_message"] = (
-            f"Import + recalc complete for {client_name.strip()} on {selected_end_date}. {recalc_summary}"
+            f"Import + recalc complete for {client_name.strip()} on {recalc_end_date} (from imported data). {recalc_summary}"
         )
+        st.session_state["pending_analysis_end_date"] = recalc_end_date
         st.rerun()
 
 
@@ -572,11 +634,11 @@ def render_layer1(conn, start_date_id: int, end_date_id: int):
         .fillna("⚪ N/A")
     )
 
-    styled = pivot.style.applymap(lambda _: "")
+    styled = pivot.style
     for column in pivot.columns:
         styled = styled.apply(color_row, subset=[column], axis=1)
 
-    st.dataframe(styled, use_container_width=True)
+    st.dataframe(styled, width="stretch")
 
 
     total_cells = len(df)
@@ -720,7 +782,7 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
         for column in ["Overall", "Washing", "Oral Care", "Dressing", "Toileting", "Grooming"]:
             display_df[column] = display_df[column].map(risk_badge)
 
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(display_df, width="stretch")
 
 
     st.markdown("### 30-Day Risk Trend")
@@ -774,7 +836,7 @@ def render_layer2(conn, start_date_id: int, end_date_id: int):
             tooltip=["full_date:T", "risk_level:N", "resident_count:Q"],
         )
     )
-    st.altair_chart(trend_chart, use_container_width=True)
+    st.altair_chart(trend_chart, width="stretch")
 
 
 def render_layer3(conn, start_date_id: int, end_date_id: int):
@@ -885,7 +947,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
             "◀ Previous",
             key="layer3_prev_resident",
             disabled=previous_resident_name is None,
-            use_container_width=True,
+            width="stretch",
         ):
             previous_resident_id = int(resident_options[previous_resident_name])
             open_layer3(previous_resident_id, previous_resident_name, selected_domain_name)
@@ -894,7 +956,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
             "Next ▶",
             key="layer3_next_resident",
             disabled=next_resident_name is None,
-            use_container_width=True,
+            width="stretch",
         ):
             next_resident_id = int(resident_options[next_resident_name])
             open_layer3(next_resident_id, next_resident_name, selected_domain_name)
@@ -961,7 +1023,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
         for column in ["Overall", "Washing", "Oral Care", "Dressing", "Toileting", "Grooming"]:
             overview_display[column] = overview_display[column].map(risk_badge)
 
-        st.dataframe(overview_display, use_container_width=True, height=320)
+        st.dataframe(overview_display, width="stretch", height=320)
 
     st.markdown("### Resident Detail")
 
@@ -1150,7 +1212,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
                     tooltip=["full_date:T", "crs_total:Q", "refusal_count:Q", "max_gap_hours:Q"],
                 )
             )
-            st.altair_chart(crs_chart, use_container_width=True)
+            st.altair_chart(crs_chart, width="stretch")
 
         with trend_col2:
             dcs_chart = (
@@ -1162,7 +1224,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
                     tooltip=["full_date:T", "dcs_percentage:Q", "actual_entries:Q", "expected_entries:Q"],
                 )
             )
-            st.altair_chart(dcs_chart, use_container_width=True)
+            st.altair_chart(dcs_chart, width="stretch")
 
         drivers_col1, drivers_col2 = st.columns(2)
         with drivers_col1:
@@ -1175,7 +1237,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
                     tooltip=["full_date:T", "max_gap_hours:Q"],
                 )
             )
-            st.altair_chart(gap_chart, use_container_width=True)
+            st.altair_chart(gap_chart, width="stretch")
 
         with drivers_col2:
             entries_chart = (
@@ -1187,7 +1249,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
                     tooltip=["full_date:T", "actual_entries:Q", "expected_entries:Q"],
                 )
             )
-            st.altair_chart(entries_chart, use_container_width=True)
+            st.altair_chart(entries_chart, width="stretch")
 
     start_date = DateHelper.date_id_to_date(start_date_id)
     end_date = DateHelper.date_id_to_date(end_date_id)
@@ -1230,7 +1292,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
             timeline_df["Gap (hours)"] = timeline_df["Gap (hours)"].apply(
                 lambda val: round(float(val), 1) if pd.notna(val) else None
             )
-        st.dataframe(timeline_df, use_container_width=True)
+        st.dataframe(timeline_df, width="stretch")
 
     st.markdown("### Assistance Distribution")
     assist_query = DashboardQueries.layer3_assistance_distribution(
@@ -1263,7 +1325,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
             tooltip=["assistance_level:N", "event_count:Q", "percentage:Q"],
         )
     )
-    st.altair_chart(assist_chart, use_container_width=True)
+    st.altair_chart(assist_chart, width="stretch")
     st.dataframe(
         assist_df.rename(
             columns={
@@ -1272,7 +1334,7 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
                 "percentage": "Percent",
             }
         ),
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -1317,6 +1379,10 @@ def main():
         st.stop()
 
     default_end_date = get_latest_scored_end_date(conn) or date.today()
+
+    pending_end_date = st.session_state.pop("pending_analysis_end_date", None)
+    if pending_end_date is not None:
+        st.session_state["analysis_end_date"] = pending_end_date
 
     st.sidebar.header("Analysis Period")
     end_date = st.sidebar.date_input("End date", default_end_date, key="analysis_end_date")

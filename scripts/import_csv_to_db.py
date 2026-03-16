@@ -286,12 +286,10 @@ def verify_idempotency_index(cursor):
     if cursor.fetchone():
         return
 
-    print("❌ Missing required dedupe index: uq_fact_adl_event_dedupe")
-    print("\nThis import is configured to be idempotent, but your database schema")
-    print("has not yet been migrated.")
-    print("\nRun this once, then retry import:")
-    print("  psql -U postgres -d care_analytics -f database/migrations/002_add_event_dedupe_index.sql")
-    sys.exit(1)
+    raise RuntimeError(
+        "Missing required dedupe index: uq_fact_adl_event_dedupe. "
+        "Run database/migrations/002_add_event_dedupe_index.sql and retry."
+    )
 
 
 def verify_import_permissions(cursor):
@@ -309,11 +307,10 @@ def verify_import_permissions(cursor):
     if can_insert_event:
         return
 
-    print("❌ Permission denied: current DB user cannot INSERT into public.fact_adl_event")
-    print(f"   Connected user: {current_user}")
-    print("\nGrant required privilege, then retry import:")
-    print(f"  GRANT INSERT, SELECT ON TABLE public.fact_adl_event TO {current_user};")
-    sys.exit(1)
+    raise PermissionError(
+        "Permission denied: current DB user cannot INSERT into public.fact_adl_event "
+        f"(connected user: {current_user})."
+    )
 
 
 # =============================================================================
@@ -563,6 +560,9 @@ def main():
     # Import events
     try:
         import_events(df, conn, args.client, args.limit)
+    except Exception as exc:
+        print(f"\n❌ Import failed: {exc}")
+        sys.exit(1)
     finally:
         conn.close()
         print("\n✓ Database connection closed")
