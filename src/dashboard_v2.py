@@ -1065,22 +1065,27 @@ def render_layer3(conn, start_date_id: int, end_date_id: int):
     actual_entries_value = int(score["actual_entries"]) if pd.notna(score["actual_entries"]) else 0
     expected_entries_value = float(score["expected_entries"]) if pd.notna(score["expected_entries"]) else 0.0
 
+    gap_pts = int(score["crs_gap_score"])
     if max_gap_hours_value is None:
         gap_explanation = "Gap: insufficient event history in this period to compute a max gap."
-    elif max_gap_hours_value > red_gap_threshold:
+    elif gap_pts == 0:
         gap_explanation = (
-            f"Gap: max recorded gap is {max_gap_hours_value:.1f}h, above RED threshold "
-            f"({red_gap_threshold}h), so gap contributes 3 points."
+            f"Gap: max recorded gap is {max_gap_hours_value:.1f}h. "
+            f"Breach frequency is below the weekly rate threshold, so gap contributes 0 points."
         )
-    elif max_gap_hours_value > amber_gap_threshold:
+    elif gap_pts == 2:
         gap_explanation = (
-            f"Gap: max recorded gap is {max_gap_hours_value:.1f}h, above AMBER threshold "
-            f"({amber_gap_threshold}h) and at/below RED ({red_gap_threshold}h), so gap contributes 2 points."
+            f"Gap: max recorded gap is {max_gap_hours_value:.1f}h "
+            f"(thresholds: AMBER >{amber_gap_threshold}h, RED >{red_gap_threshold}h). "
+            f"Breach frequency over this window gives 2 points (AMBER). "
+            f"Score is rate-normalised: ≥1 breach/week triggers each level."
         )
     else:
         gap_explanation = (
-            f"Gap: max recorded gap is {max_gap_hours_value:.1f}h, within threshold "
-            f"(≤{amber_gap_threshold}h), so gap contributes 0 points."
+            f"Gap: max recorded gap is {max_gap_hours_value:.1f}h "
+            f"(thresholds: AMBER >{amber_gap_threshold}h, RED >{red_gap_threshold}h). "
+            f"Breach frequency over this window gives 3 points (RED). "
+            f"Score is rate-normalised: ≥1 breach/week triggers each level."
         )
 
     with st.expander("How this score is calculated", expanded=False):

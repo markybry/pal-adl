@@ -44,6 +44,12 @@ REFUSAL_RATE_THRESHOLD_RED = REFUSAL_THRESHOLD_RED / REFUSAL_BASELINE_DAYS
 DOCUMENTATION_THRESHOLD_AMBER = 0.60  # <60% compliance = monitoring
 DOCUMENTATION_THRESHOLD_RED = 0.40    # <40% compliance = immediate review
 
+# Gap breach rate thresholds (per day), normalized to a 7-day baseline
+# Mirrors refusal rate logic so scores are consistent across lookback windows.
+GAP_BASELINE_DAYS = 7
+GAP_RED_BREACH_RATE = 1 / GAP_BASELINE_DAYS    # ≥1 red-level breach/week = RED
+GAP_AMBER_BREACH_RATE = 1 / GAP_BASELINE_DAYS  # ≥1 amber-level breach/week = AMBER
+
 
 @dataclass
 class DomainConfig:
@@ -214,47 +220,76 @@ class ScoringEngine:
     
     @staticmethod
     def calculate_gap_score(
-        max_gap_hours: Optional[float],
-        domain_config: DomainConfig
+        gaps: List[float],
+        domain_config: DomainConfig,
+        period_days: int,
     ) -> ScoreComponent:
         """
-        Calculate gap component of Care Risk Score
-        
-        Uses domain-specific thresholds:
-          <= amber_threshold: 0 points (GREEN)
-          > amber, <= red:    2 points (AMBER)
-          > red_threshold:    3 points (RED)
+        Calculate gap component of Care Risk Score.
+
+        Rate-normalised across lookback windows (mirrors refusal scoring).
+        Counts how many gaps breach each domain threshold, computes a
+        per-day rate, and compares against a fixed 7-day baseline rate.
+
+        Baseline (7-day equivalent):
+          RED:   ≥1 red-level breach/week  (~0.143 breaches/day)
+          AMBER: ≥1 amber-level breach/week, or any isolated red breach
         """
-        if max_gap_hours is None:
+        if not gaps:
             return ScoreComponent(
                 component_name='gap_score',
                 points=0,
                 description='Insufficient data for gap analysis',
                 raw_value=None
             )
-        
+
         amber_threshold = domain_config.gap_threshold_amber
         red_threshold = domain_config.gap_threshold_red
-        
-        if max_gap_hours > red_threshold:
+        max_gap_hours = max(gaps)
+
+        red_breaches = sum(1 for g in gaps if g > red_threshold)
+        amber_only_breaches = sum(1 for g in gaps if amber_threshold < g <= red_threshold)
+
+        red_breach_rate = red_breaches / period_days
+        amber_only_rate = amber_only_breaches / period_days
+
+        if red_breach_rate >= GAP_RED_BREACH_RATE:
             return ScoreComponent(
                 component_name='gap_score',
                 points=3,
-                description=f'Max gap {max_gap_hours:.1f}h (>{red_threshold}h = RED)',
+                description=(
+                    f'{red_breaches} red-level gap(s) (>{red_threshold}h) in {period_days}d '
+                    f'({red_breach_rate:.3f}/day \u2265 {GAP_RED_BREACH_RATE:.3f}/day = RED); '
+                    f'max gap {max_gap_hours:.1f}h'
+                ),
                 raw_value=max_gap_hours
             )
-        elif max_gap_hours > amber_threshold:
+        elif red_breaches > 0:
             return ScoreComponent(
                 component_name='gap_score',
                 points=2,
-                description=f'Max gap {max_gap_hours:.1f}h (>{amber_threshold}h = AMBER)',
+                description=(
+                    f'{red_breaches} red-level gap(s) (>{red_threshold}h) in {period_days}d '
+                    f'(below weekly rate threshold; max gap {max_gap_hours:.1f}h)'
+                ),
+                raw_value=max_gap_hours
+            )
+        elif amber_only_rate >= GAP_AMBER_BREACH_RATE:
+            return ScoreComponent(
+                component_name='gap_score',
+                points=2,
+                description=(
+                    f'{amber_only_breaches} amber-level gap(s) (>{amber_threshold}h, \u2264{red_threshold}h) in {period_days}d '
+                    f'({amber_only_rate:.3f}/day \u2265 {GAP_AMBER_BREACH_RATE:.3f}/day = AMBER); '
+                    f'max gap {max_gap_hours:.1f}h'
+                ),
                 raw_value=max_gap_hours
             )
         else:
             return ScoreComponent(
                 component_name='gap_score',
                 points=0,
-                description=f'Max gap {max_gap_hours:.1f}h (within threshold)',
+                description=f'Gap breach rate below threshold; max gap {max_gap_hours:.1f}h',
                 raw_value=max_gap_hours
             )
     
@@ -352,7 +387,7 @@ class ScoringEngine:
         
         # Calculate components
         refusal_score = ScoringEngine.calculate_refusal_score(refusal_count, period_days)
-        gap_score = ScoringEngine.calculate_gap_score(max_gap_hours, domain_config)
+        gap_score = ScoringEngine.calculate_gap_score(gaps, domain_config, period_days)
         dependency_score = ScoringEngine.calculate_dependency_score(events)
         
         # Sum components

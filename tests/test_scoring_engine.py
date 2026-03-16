@@ -61,37 +61,54 @@ class TestGapScoring(unittest.TestCase):
     """Test gap score calculation"""
     
     def setUp(self):
-        self.oral_care_config = ADL_DOMAINS['Oral Care']
+        self.oral_care_config = ADL_DOMAINS['Oral Care']  # amber=16h, red=24h
     
     def test_no_gap_data(self):
-        score = ScoringEngine.calculate_gap_score(None, self.oral_care_config)
+        score = ScoringEngine.calculate_gap_score([], self.oral_care_config, 7)
         self.assertEqual(score.points, 0)
+        self.assertIn('Insufficient', score.description)
     
     def test_within_threshold(self):
-        score = ScoringEngine.calculate_gap_score(10.0, self.oral_care_config)
+        score = ScoringEngine.calculate_gap_score([10.0], self.oral_care_config, 7)
         self.assertEqual(score.points, 0)
-        self.assertIn('within threshold', score.description)
     
-    def test_amber_threshold(self):
-        # Oral Care: amber=16h
-        score = ScoringEngine.calculate_gap_score(18.0, self.oral_care_config)
+    def test_amber_threshold_7_days(self):
+        # 1 amber breach in 7 days => rate = 1/7 >= threshold => AMBER
+        score = ScoringEngine.calculate_gap_score([18.0], self.oral_care_config, 7)
         self.assertEqual(score.points, 2)
         self.assertIn('AMBER', score.description)
     
-    def test_red_threshold(self):
-        # Oral Care: red=24h
-        score = ScoringEngine.calculate_gap_score(30.0, self.oral_care_config)
+    def test_red_threshold_7_days(self):
+        # 1 red breach in 7 days => rate = 1/7 >= threshold => RED
+        score = ScoringEngine.calculate_gap_score([30.0], self.oral_care_config, 7)
         self.assertEqual(score.points, 3)
         self.assertIn('RED', score.description)
     
     def test_exact_amber_boundary(self):
-        # Exactly at amber threshold (16h) should be GREEN
-        score = ScoringEngine.calculate_gap_score(16.0, self.oral_care_config)
+        # Exactly at amber threshold (16h) should NOT breach (> not >=)
+        score = ScoringEngine.calculate_gap_score([16.0], self.oral_care_config, 7)
         self.assertEqual(score.points, 0)
     
     def test_just_over_amber(self):
-        score = ScoringEngine.calculate_gap_score(16.1, self.oral_care_config)
+        score = ScoringEngine.calculate_gap_score([16.1], self.oral_care_config, 7)
         self.assertEqual(score.points, 2)
+
+    def test_isolated_red_breach_in_30_days_is_amber(self):
+        # 1 red breach in 30 days: rate = 1/30 < 1/7 => not RED, but breach > 0 => AMBER
+        score = ScoringEngine.calculate_gap_score([30.0], self.oral_care_config, 30)
+        self.assertEqual(score.points, 2)
+        self.assertNotIn('RED', score.description)
+
+    def test_frequent_red_breaches_in_30_days_is_red(self):
+        # 5 red breaches in 30 days: rate = 5/30 = 0.167 >= 1/7 = 0.143 => RED
+        score = ScoringEngine.calculate_gap_score([30.0] * 5, self.oral_care_config, 30)
+        self.assertEqual(score.points, 3)
+        self.assertIn('RED', score.description)
+
+    def test_amber_breach_below_weekly_rate_in_30_days_is_green(self):
+        # 3 amber-only breaches in 30 days: rate = 3/30 = 0.10 < 1/7 = 0.143 => GREEN
+        score = ScoringEngine.calculate_gap_score([18.0] * 3, self.oral_care_config, 30)
+        self.assertEqual(score.points, 0)
 
 
 class TestDependencyScoring(unittest.TestCase):

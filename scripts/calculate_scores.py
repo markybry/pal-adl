@@ -33,8 +33,8 @@ from src.scoring_engine import ADLEvent, AssistanceLevel, ScoringEngine, is_refu
 
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "care_analytics"),
-    "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", "postgres"),
+    "user": os.getenv("DB_WRITE_USER") or os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_WRITE_PASSWORD") or os.getenv("DB_PASSWORD", "postgres"),
     "host": os.getenv("DB_HOST", "localhost"),
     "port": int(os.getenv("DB_PORT", "5432")),
     "sslmode": os.getenv("DB_SSLMODE", "prefer"),
