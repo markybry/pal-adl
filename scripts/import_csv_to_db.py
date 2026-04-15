@@ -36,16 +36,17 @@ from src.scoring_engine import parse_assistance_level, is_refusal
 
 DB_CONFIG = {
     'dbname': os.getenv('DB_NAME', 'care_analytics'),
-    'user': os.getenv('DB_USER', 'postgres'),
-    'password': os.getenv('DB_PASSWORD', 'postgres'),  # Default: 'postgres' - CHANGE THIS!
+    'user': os.getenv('DB_WRITE_USER') or os.getenv('DB_USER', 'postgres'),
+    'password': os.getenv('DB_WRITE_PASSWORD') or os.getenv('DB_PASSWORD', 'postgres'),
     'host': os.getenv('DB_HOST', 'localhost'),
     'port': int(os.getenv('DB_PORT', '5432')),
     'sslmode': os.getenv('DB_SSLMODE', 'prefer')
 }
 
-# NOTE: Set environment variable DB_PASSWORD or edit the default above
-# Windows: set DB_PASSWORD=your_password
-# Linux/Mac: export DB_PASSWORD=your_password
+# NOTE: Set DB_WRITE_USER / DB_WRITE_PASSWORD for a write-capable role (e.g. care_app_rw).
+# Falls back to DB_USER / DB_PASSWORD if the write vars are not set.
+# Windows: set DB_WRITE_USER=care_app_rw && set DB_WRITE_PASSWORD=your_password
+# Linux/Mac: export DB_WRITE_USER=care_app_rw DB_WRITE_PASSWORD=your_password
 
 # Map CSV domain names to database domain names
 # The database contains 5 standard Personal Care ADL domains:
